@@ -28,11 +28,10 @@ async def get_key_manager():
     return await get_key_manager_instance()
 
 
-def get_next_working_key(model_name: str):
-    """依赖注入工厂：获取下一个可用的API密钥"""
-    async def _get_key(key_manager: KeyManager = Depends(get_key_manager)):
-        return await key_manager.get_next_working_key(model_name)
-    return _get_key
+async def get_next_working_key(key_manager: KeyManager = Depends(get_key_manager)):
+    """获取下一个可用的API密钥"""
+    # This is now a placeholder, the actual key fetching will be done inside the route
+    return key_manager
 
 
 async def get_chat_service(key_manager: KeyManager = Depends(get_key_manager)):
@@ -104,11 +103,12 @@ async def generate_content(
     model_name: str,
     request: GeminiRequest,
     _=Depends(security_service.verify_key_or_goog_api_key),
-    api_key: str = Depends(get_next_working_key(model_name)),
     key_manager: KeyManager = Depends(get_key_manager),
     chat_service: GeminiChatService = Depends(get_chat_service)
 ):
     """处理 Gemini 非流式内容生成请求。"""
+    api_key = await key_manager.get_next_working_key(model_name)
+    kwargs = locals()
     operation_name = "gemini_generate_content"
     async with handle_route_errors(logger, operation_name, failure_message="Content generation failed"):
         logger.info(f"Handling Gemini content generation request for model: {model_name}")
@@ -163,11 +163,12 @@ async def stream_generate_content(
     model_name: str,
     request: GeminiRequest,
     _=Depends(security_service.verify_key_or_goog_api_key),
-    api_key: str = Depends(get_next_working_key(model_name)),
     key_manager: KeyManager = Depends(get_key_manager),
     chat_service: GeminiChatService = Depends(get_chat_service)
 ):
     """处理 Gemini 流式内容生成请求。"""
+    api_key = await key_manager.get_next_working_key(model_name)
+    kwargs = locals()
     operation_name = "gemini_stream_generate_content"
     async with handle_route_errors(logger, operation_name, failure_message="Streaming request initiation failed"):
         logger.info(f"Handling Gemini streaming content generation for model: {model_name}")
@@ -192,11 +193,12 @@ async def count_tokens(
     model_name: str,
     request: GeminiRequest,
     _=Depends(security_service.verify_key_or_goog_api_key),
-    api_key: str = Depends(get_next_working_key(model_name)),
     key_manager: KeyManager = Depends(get_key_manager),
     chat_service: GeminiChatService = Depends(get_chat_service)
 ):
     """处理 Gemini token 计数请求。"""
+    api_key = await key_manager.get_next_working_key(model_name)
+    kwargs = locals()
     operation_name = "gemini_count_tokens"
     async with handle_route_errors(logger, operation_name, failure_message="Token counting failed"):
         logger.info(f"Handling Gemini token count request for model: {model_name}")

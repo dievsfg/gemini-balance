@@ -34,11 +34,11 @@ async def get_key_manager():
     return await get_key_manager_instance()
 
 
-def get_next_working_key_wrapper(request: ChatRequest):
-    """依赖注入工厂：根据请求中的模型名称获取下一个可用的API密钥"""
-    async def _get_key(key_manager: KeyManager = Depends(get_key_manager)):
-        return await key_manager.get_next_working_key(request.model)
-    return _get_key
+async def get_next_working_key_wrapper(
+    key_manager: KeyManager = Depends(get_key_manager),
+):
+    # This is now a placeholder, the actual key fetching will be done inside the route
+    return key_manager
 
 
 async def get_openai_chat_service(key_manager: KeyManager = Depends(get_key_manager)):
@@ -72,11 +72,12 @@ async def list_models(
 async def chat_completion(
     request: ChatRequest,
     _=Depends(security_service.verify_authorization),
-    api_key: str = Depends(get_next_working_key_wrapper(request)),
     key_manager: KeyManager = Depends(get_key_manager),
     chat_service: OpenAIChatService = Depends(get_openai_chat_service),
 ):
     """处理 OpenAI 聊天补全请求，支持流式响应和特定模型切换。"""
+    api_key = await key_manager.get_next_working_key(request.model)
+    kwargs = locals()
     operation_name = "chat_completion"
     is_image_chat = request.model == f"{settings.CREATE_IMAGE_MODEL}-chat"
     current_api_key = api_key
@@ -164,10 +165,12 @@ async def get_keys_list(
 async def text_to_speech(
     request: TTSRequest,
     _=Depends(security_service.verify_authorization),
-    api_key: str = Depends(get_next_working_key_wrapper(request)),
     tts_service: TTSService = Depends(get_tts_service),
+    key_manager: KeyManager = Depends(get_key_manager)
 ):
     """处理 OpenAI TTS 请求。"""
+    api_key = await key_manager.get_next_working_key(request.model)
+    kwargs = locals()
     operation_name = "text_to_speech"
     async with handle_route_errors(logger, operation_name):
         logger.info(f"Handling TTS request for model: {request.model}")
