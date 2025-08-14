@@ -34,10 +34,11 @@ async def get_key_manager():
     return await get_key_manager_instance()
 
 
-async def get_next_working_key_wrapper(
-    key_manager: KeyManager = Depends(get_key_manager),
-):
-    return await key_manager.get_next_working_key()
+def get_next_working_key_wrapper(request: ChatRequest):
+    """依赖注入工厂：根据请求中的模型名称获取下一个可用的API密钥"""
+    async def _get_key(key_manager: KeyManager = Depends(get_key_manager)):
+        return await key_manager.get_next_working_key(request.model)
+    return _get_key
 
 
 async def get_openai_chat_service(key_manager: KeyManager = Depends(get_key_manager)):
@@ -71,7 +72,7 @@ async def list_models(
 async def chat_completion(
     request: ChatRequest,
     _=Depends(security_service.verify_authorization),
-    api_key: str = Depends(get_next_working_key_wrapper),
+    api_key: str = Depends(get_next_working_key_wrapper(request)),
     key_manager: KeyManager = Depends(get_key_manager),
     chat_service: OpenAIChatService = Depends(get_openai_chat_service),
 ):
@@ -129,7 +130,7 @@ async def embedding(
     operation_name = "embedding"
     async with handle_route_errors(logger, operation_name):
         logger.info(f"Handling embedding request for model: {request.model}")
-        api_key = await key_manager.get_next_working_key()
+        api_key = await key_manager.get_next_working_key(request.model)
         logger.info(f"Using API key: {redact_key_for_logging(api_key)}")
         response = await embedding_service.create_embedding(
             input_text=request.input, model=request.model, api_key=api_key
@@ -163,7 +164,7 @@ async def get_keys_list(
 async def text_to_speech(
     request: TTSRequest,
     _=Depends(security_service.verify_authorization),
-    api_key: str = Depends(get_next_working_key_wrapper),
+    api_key: str = Depends(get_next_working_key_wrapper(request)),
     tts_service: TTSService = Depends(get_tts_service),
 ):
     """处理 OpenAI TTS 请求。"""

@@ -14,9 +14,9 @@ class KeyManager:
     def __init__(self, api_keys: list, vertex_api_keys: list):
         self.api_keys = api_keys
         self.vertex_api_keys = vertex_api_keys
-        self.key_cycle = cycle(api_keys)
+        self.model_key_cycles: Dict[str, cycle] = {}
         self.vertex_key_cycle = cycle(vertex_api_keys)
-        self.key_cycle_lock = asyncio.Lock()
+        self.model_key_cycles_lock = asyncio.Lock()
         self.vertex_key_cycle_lock = asyncio.Lock()
         self.failure_count_lock = asyncio.Lock()
         self.vertex_failure_count_lock = asyncio.Lock()
@@ -30,10 +30,18 @@ class KeyManager:
     async def get_paid_key(self) -> str:
         return self.paid_key
 
-    async def get_next_key(self) -> str:
-        """获取下一个API key"""
-        async with self.key_cycle_lock:
-            return next(self.key_cycle)
+    async def _get_or_create_model_cycle(self, model_name: str) -> cycle:
+        """获取或创建模型专属的密钥循环迭代器"""
+        async with self.model_key_cycles_lock:
+            if model_name not in self.model_key_cycles:
+                self.model_key_cycles[model_name] = cycle(self.api_keys)
+                logger.info(f"Created new key cycle for model: {model_name}")
+            return self.model_key_cycles[model_name]
+
+    async def get_next_key(self, model_name: str) -> str:
+        """获取指定模型对应的下一个API key"""
+        model_cycle = await self._get_or_create_model_cycle(model_name)
+        return next(model_cycle)
 
     async def get_next_vertex_key(self) -> str:
         """获取下一个 Vertex Express API key"""
@@ -86,16 +94,16 @@ class KeyManager:
             )
             return False
 
-    async def get_next_working_key(self) -> str:
-        """获取下一可用的API key"""
-        initial_key = await self.get_next_key()
+    async def get_next_working_key(self, model_name: str) -> str:
+        """获取指定模型对应的下一可用的API key"""
+        initial_key = await self.get_next_key(model_name)
         current_key = initial_key
 
         while True:
             if await self.is_key_valid(current_key):
                 return current_key
 
-            current_key = await self.get_next_key()
+            current_key = await self.get_next_key(model_name)
             if current_key == initial_key:
                 return current_key
 
@@ -112,7 +120,7 @@ class KeyManager:
             if current_key == initial_key:
                 return current_key
 
-    async def handle_api_failure(self, api_key: str, retries: int) -> str:
+    async def handle_api_failure(self, api_key: str, model_name: str, retries: int) -> str:
         """处理API调用失败"""
         async with self.failure_count_lock:
             self.key_failure_counts[api_key] += 1
@@ -121,7 +129,7 @@ class KeyManager:
                     f"API key {redact_key_for_logging(api_key)} has failed {self.MAX_FAILURES} times"
                 )
         if retries < settings.MAX_RETRIES:
-            return await self.get_next_working_key()
+            return await self.get_next_working_key(model_name)
         else:
             return ""
 
@@ -222,7 +230,7 @@ _preserved_failure_counts: Union[Dict[str, int], None] = None
 _preserved_vertex_failure_counts: Union[Dict[str, int], None] = None
 _preserved_old_api_keys_for_reset: Union[list, None] = None
 _preserved_vertex_old_api_keys_for_reset: Union[list, None] = None
-_preserved_next_key_in_cycle: Union[str, None] = None
+_preserved_model_key_cycles: Union[Dict[str, cycle], None] = None
 _preserved_vertex_next_key_in_cycle: Union[str, None] = None
 
 
@@ -236,7 +244,7 @@ async def get_key_manager_instance(
     如果已创建实例，则忽略 api_keys 参数，返回现有单例。
     如果在重置后调用，会尝试恢复之前的状态（失败计数、循环位置）。
     """
-    global _singleton_instance, _preserved_failure_counts, _preserved_vertex_failure_counts, _preserved_old_api_keys_for_reset, _preserved_vertex_old_api_keys_for_reset, _preserved_next_key_in_cycle, _preserved_vertex_next_key_in_cycle
+    global _singleton_instance, _preserved_failure_counts, _preserved_vertex_failure_counts, _preserved_old_api_keys_for_reset, _preserved_vertex_old_api_keys_for_reset, _preserved_model_key_cycles, _preserved_vertex_next_key_in_cycle
 
     async with _singleton_lock:
         if _singleton_instance is None:
@@ -288,75 +296,11 @@ async def get_key_manager_instance(
                 logger.info("Inherited failure counts for applicable Vertex keys.")
             _preserved_vertex_failure_counts = None
 
-            # 2. 调整 key_cycle 的起始点
-            start_key_for_new_cycle = None
-            if (
-                _preserved_old_api_keys_for_reset
-                and _preserved_next_key_in_cycle
-                and _singleton_instance.api_keys
-            ):
-                try:
-                    start_idx_in_old = _preserved_old_api_keys_for_reset.index(
-                        _preserved_next_key_in_cycle
-                    )
-
-                    for i in range(len(_preserved_old_api_keys_for_reset)):
-                        current_old_key_idx = (start_idx_in_old + i) % len(
-                            _preserved_old_api_keys_for_reset
-                        )
-                        key_candidate = _preserved_old_api_keys_for_reset[
-                            current_old_key_idx
-                        ]
-                        if key_candidate in _singleton_instance.api_keys:
-                            start_key_for_new_cycle = key_candidate
-                            break
-                except ValueError:
-                    logger.warning(
-                        f"Preserved next key '{_preserved_next_key_in_cycle}' not found in preserved old API keys. "
-                        "New cycle will start from the beginning of the new list."
-                    )
-                except Exception as e:
-                    logger.error(
-                        f"Error determining start key for new cycle from preserved state: {e}. "
-                        "New cycle will start from the beginning."
-                    )
-
-            if start_key_for_new_cycle and _singleton_instance.api_keys:
-                try:
-                    target_idx = _singleton_instance.api_keys.index(
-                        start_key_for_new_cycle
-                    )
-                    for _ in range(target_idx):
-                        next(_singleton_instance.key_cycle)
-                    logger.info(
-                        f"Key cycle in new instance advanced. Next call to get_next_key() will yield: {start_key_for_new_cycle}"
-                    )
-                except ValueError:
-                    logger.warning(
-                        f"Determined start key '{start_key_for_new_cycle}' not found in new API keys during cycle advancement. "
-                        "New cycle will start from the beginning."
-                    )
-                except StopIteration:
-                    logger.error(
-                        "StopIteration while advancing key cycle, implies empty new API key list previously missed."
-                    )
-                except Exception as e:
-                    logger.error(
-                        f"Error advancing new key cycle: {e}. Cycle will start from beginning."
-                    )
-            else:
-                if _singleton_instance.api_keys:
-                    logger.info(
-                        "New key cycle will start from the beginning of the new API key list (no specific start key determined or needed)."
-                    )
-                else:
-                    logger.info(
-                        "New key cycle not applicable as the new API key list is empty."
-                    )
-
-            # 清理所有保存的状态
-            _preserved_old_api_keys_for_reset = None
-            _preserved_next_key_in_cycle = None
+            # 2. 恢复模型密钥循环状态
+            if _preserved_model_key_cycles:
+                _singleton_instance.model_key_cycles = _preserved_model_key_cycles
+                logger.info("Inherited model key cycles state.")
+            _preserved_model_key_cycles = None
 
             # 3. 调整 vertex_key_cycle 的起始点
             start_key_for_new_vertex_cycle = None
@@ -437,7 +381,7 @@ async def reset_key_manager_instance():
     将保存当前实例的状态（失败计数、旧 API keys、下一个 key 提示）
     以供下一次 get_key_manager_instance 调用时恢复。
     """
-    global _singleton_instance, _preserved_failure_counts, _preserved_vertex_failure_counts, _preserved_old_api_keys_for_reset, _preserved_vertex_old_api_keys_for_reset, _preserved_next_key_in_cycle, _preserved_vertex_next_key_in_cycle
+    global _singleton_instance, _preserved_failure_counts, _preserved_vertex_failure_counts, _preserved_old_api_keys_for_reset, _preserved_vertex_old_api_keys_for_reset, _preserved_model_key_cycles, _preserved_vertex_next_key_in_cycle
     async with _singleton_lock:
         if _singleton_instance:
             # 1. 保存失败计数
@@ -452,22 +396,8 @@ async def reset_key_manager_instance():
                 _singleton_instance.vertex_api_keys.copy()
             )
 
-            # 3. 保存 key_cycle 的下一个 key 提示
-            try:
-                if _singleton_instance.api_keys:
-                    _preserved_next_key_in_cycle = (
-                        await _singleton_instance.get_next_key()
-                    )
-                else:
-                    _preserved_next_key_in_cycle = None
-            except StopIteration:
-                logger.warning(
-                    "Could not preserve next key hint: key cycle was empty or exhausted in old instance."
-                )
-                _preserved_next_key_in_cycle = None
-            except Exception as e:
-                logger.error(f"Error preserving next key hint during reset: {e}")
-                _preserved_next_key_in_cycle = None
+            # 3. 保存 model_key_cycles 的状态
+            _preserved_model_key_cycles = _singleton_instance.model_key_cycles.copy()
 
             # 4. 保存 vertex_key_cycle 的下一个 key 提示
             try:
