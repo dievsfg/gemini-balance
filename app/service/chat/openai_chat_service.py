@@ -1,7 +1,6 @@
 # app/services/chat_service.py
 
 import asyncio
-import datetime
 import json
 import re
 import time
@@ -22,6 +21,7 @@ from app.log.logger import get_openai_logger
 from app.service.client.api_client import GeminiApiClient
 from app.service.image.image_create_service import ImageCreateService
 from app.service.key.key_manager import KeyManager
+from app.utils.time_utils import get_now
 
 logger = get_openai_logger()
 
@@ -276,7 +276,7 @@ class OpenAIChatService:
     ) -> Dict[str, Any]:
         """处理普通聊天完成"""
         start_time = time.perf_counter()
-        request_datetime = datetime.datetime.now()
+        request_datetime = get_now(settings)
         is_success = False
         status_code = None
         response = None
@@ -472,7 +472,7 @@ class OpenAIChatService:
 
         while retries < max_retries:
             start_time = time.perf_counter()
-            request_datetime = datetime.datetime.now()
+            request_datetime = get_now(settings)
             current_attempt_key = final_api_key
 
             try:
@@ -596,7 +596,7 @@ class OpenAIChatService:
     ) -> AsyncGenerator[str, None]:
         logger.info(f"Starting stream image completion for model: {model}")
         start_time = time.perf_counter()
-        request_datetime = datetime.datetime.now()
+        request_datetime = get_now(settings)
         is_success = False
         status_code = None
 
@@ -663,7 +663,7 @@ class OpenAIChatService:
     ) -> Dict[str, Any]:
         logger.info(f"Starting normal image completion for model: {model}")
         start_time = time.perf_counter()
-        request_datetime = datetime.datetime.now()
+        request_datetime = get_now(settings)
         is_success = False
         status_code = None
         result = None

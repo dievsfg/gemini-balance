@@ -2,6 +2,7 @@ import logging
 import platform
 import sys
 import re
+import datetime
 from typing import Dict, Optional
 from app.utils.helpers import redact_key_for_logging as _redact_key_for_logging
 
@@ -39,10 +40,31 @@ class ColoredFormatter(logging.Formatter):
         return super().format(record)
 
 
+class TimezoneFormatter(ColoredFormatter):
+    """
+    自定义的日志格式化器,添加时区支持
+    """
+    def formatTime(self, record, datefmt=None):
+        from app.utils.time_utils import get_timezone
+        from app.config.config import settings
+        dt = datetime.datetime.fromtimestamp(record.created, get_timezone(settings))
+        if datefmt:
+            return dt.strftime(datefmt)
+        else:
+            return dt.strftime("%Y-%m-%d %H:%M:%S,%f")[:-3]
+
 class AccessLogFormatter(logging.Formatter):
     """
     Custom access log formatter that redacts API keys in URLs
     """
+    def formatTime(self, record, datefmt=None):
+        from app.utils.time_utils import get_timezone
+        from app.config.config import settings
+        dt = datetime.datetime.fromtimestamp(record.created, get_timezone(settings))
+        if datefmt:
+            return dt.strftime(datefmt)
+        else:
+            return dt.strftime("%Y-%m-%d %H:%M:%S,%f")[:-3]
 
     # API key patterns to match in URLs
     API_KEY_PATTERNS = [
@@ -84,7 +106,7 @@ class AccessLogFormatter(logging.Formatter):
 
 
 # 日志格式 - 使用 fileloc 并设置固定宽度 (例如 30)
-FORMATTER = ColoredFormatter(
+FORMATTER = TimezoneFormatter(
     "%(asctime)s | %(levelname)-17s | %(fileloc)-30s | %(message)s"
 )
 

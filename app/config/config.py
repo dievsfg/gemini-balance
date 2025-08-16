@@ -113,6 +113,14 @@ class Settings(BaseSettings):
     # 调度器配置
     CHECK_INTERVAL_HOURS: int = 1  # 默认检查间隔为1小时
     TIMEZONE: str = "Asia/Shanghai"  # 默认时区
+    TZ: str = Field(None, alias='TZ')
+
+    @field_validator("TIMEZONE", mode="before")
+    def _tz_from_env(cls, v, info: ValidationInfo):
+        # 如果 .env 或环境变量中设置了 TZ，则优先使用 TZ 的值
+        if info.data.get('TZ'):
+            return info.data.get('TZ')
+        return v
 
     # github
     GITHUB_REPO_OWNER: str = "snailyp"
@@ -389,7 +397,8 @@ async def sync_initial_settings():
         final_memory_settings = settings.model_dump()
         settings_to_update: List[Dict[str, Any]] = []
         settings_to_insert: List[Dict[str, Any]] = []
-        now = datetime.datetime.now(datetime.timezone.utc)
+        from app.utils.time_utils import get_now
+        now = get_now(settings)
 
         existing_db_keys = set(db_settings_map.keys())
 

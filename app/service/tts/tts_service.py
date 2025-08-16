@@ -1,4 +1,3 @@
-import datetime
 import io
 import re
 import time
@@ -12,6 +11,7 @@ from app.core.constants import TTS_VOICE_NAMES
 from app.database.services import add_error_log, add_request_log
 from app.domain.openai_models import TTSRequest
 from app.log.logger import get_openai_logger
+from app.utils.time_utils import get_now
 
 logger = get_openai_logger()
 
@@ -33,7 +33,7 @@ class TTSService:
         使用 Google Gemini SDK 创建音频。
         """
         start_time = time.perf_counter()
-        request_datetime = datetime.datetime.now()
+        request_datetime = get_now()
         is_success = False
         status_code = None
         response = None

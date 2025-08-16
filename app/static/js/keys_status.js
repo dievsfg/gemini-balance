@@ -1702,6 +1702,9 @@ async function showApiCallDetails(
     case "24h":
       periodText = "最近 24 小时";
       break;
+    case "today":
+      periodText = "今日 (自太平洋午夜)";
+      break;
     default:
       periodText = "指定时间段";
   }

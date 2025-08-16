@@ -1261,6 +1261,16 @@ endblock %} {% block head_extra_styles %}
             <div class="stat-label">24小时调用</div>
             <i class="stat-icon fas fa-calendar-day"></i>
           </div>
+          <div
+            class="stat-item stat-success cursor-pointer hover:bg-green-100"
+            title="点击查看今日调用详情"
+            data-period="today"
+            onclick="showApiCallDetails('today', '{{ api_stats.calls_today.total }}', '{{ api_stats.calls_today.success }}', '{{ api_stats.calls_today.failure }}')"
+          >
+            <div class="stat-value">{{ api_stats.calls_today.total }}</div>
+            <div class="stat-label">今日调用</div>
+            <i class="stat-icon fas fa-sun"></i>
+          </div>
         </div>
       </div>
     </div>

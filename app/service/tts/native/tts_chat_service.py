@@ -4,13 +4,13 @@
 """
 
 import time
-import datetime
 from typing import Any, Dict
 from app.service.chat.gemini_chat_service import GeminiChatService
 from app.service.tts.native.tts_response_handler import TTSResponseHandler
 from app.domain.gemini_models import GeminiRequest
 from app.log.logger import get_gemini_logger
 from app.database.services import add_request_log, add_error_log
+from app.utils.time_utils import get_now
 
 logger = get_gemini_logger()
 
@@ -61,7 +61,7 @@ class TTSGeminiChatService(GeminiChatService):
         """
         # 记录开始时间和请求时间
         start_time = time.perf_counter()
-        request_datetime = datetime.datetime.now()
+        request_datetime = get_now()
         is_success = False
         status_code = None
 

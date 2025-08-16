@@ -1,4 +1,3 @@
-import datetime
 import time
 import re
 from typing import List, Union
@@ -10,6 +9,7 @@ from openai.types import CreateEmbeddingResponse
 from app.config.config import settings
 from app.log.logger import get_embeddings_logger
 from app.database.services import add_error_log, add_request_log
+from app.utils.time_utils import get_now
 
 logger = get_embeddings_logger()
 
@@ -21,7 +21,7 @@ class EmbeddingService:
     ) -> CreateEmbeddingResponse:
         """Create embeddings using OpenAI API with database logging"""
         start_time = time.perf_counter()
-        request_datetime = datetime.datetime.now()
+        request_datetime = get_now()
         is_success = False
         status_code = None
         response = None

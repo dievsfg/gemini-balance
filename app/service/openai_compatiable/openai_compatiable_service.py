@@ -1,5 +1,4 @@
 
-import datetime
 import json
 import re
 import time
@@ -15,6 +14,7 @@ from app.service.client.api_client import OpenaiApiClient
 from app.service.key.key_manager import KeyManager
 from app.utils.helpers import redact_key_for_logging
 from app.log.logger import get_openai_compatible_logger
+from app.utils.time_utils import get_now
 
 logger = get_openai_compatible_logger()
 
@@ -67,7 +67,7 @@ class OpenAICompatiableService:
     ) -> Dict[str, Any]:
         """处理普通聊天完成"""
         start_time = time.perf_counter()
-        request_datetime = datetime.datetime.now()
+        request_datetime = get_now()
         is_success = False
         status_code = None
         response = None
@@ -119,7 +119,7 @@ class OpenAICompatiableService:
 
         while retries < max_retries:
             start_time = time.perf_counter()
-            request_datetime = datetime.datetime.now()
+            request_datetime = get_now()
             current_attempt_key = api_key
             final_api_key = current_attempt_key
             try:

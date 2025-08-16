@@ -2,6 +2,9 @@
 
 import datetime
 from typing import Union
+import pytz
+from app.config.config import settings
+from app.utils.time_utils import get_now, get_timezone
 
 from sqlalchemy import and_, case, func, or_, select
 
@@ -15,10 +18,9 @@ logger = get_stats_logger()
 class StatsService:
     """Service class for handling statistics related operations."""
 
-    async def get_calls_in_last_seconds(self, seconds: int) -> dict[str, int]:
-        """获取过去 N 秒内的调用次数 (总数、成功、失败)"""
+    async def get_calls_in_time_range(self, start_time: datetime.datetime) -> dict[str, int]:
+        """获取指定时间范围内的调用次数 (总数、成功、失败)"""
         try:
-            cutoff_time = datetime.datetime.now() - datetime.timedelta(seconds=seconds)
             query = select(
                 func.count(RequestLog.id).label("total"),
                 func.sum(
@@ -46,7 +48,7 @@ class StatsService:
                         else_=0,
                     )
                 ).label("failure"),
-            ).where(RequestLog.request_time >= cutoff_time)
+            ).where(RequestLog.request_time >= start_time)
             result = await database.fetch_one(query)
             if result:
                 return {
@@ -56,8 +58,13 @@ class StatsService:
                 }
             return {"total": 0, "success": 0, "failure": 0}
         except Exception as e:
-            logger.error(f"Failed to get calls in last {seconds} seconds: {e}")
+            logger.error(f"Failed to get calls in time range since {start_time}: {e}")
             return {"total": 0, "success": 0, "failure": 0}
+
+    async def get_calls_in_last_seconds(self, seconds: int) -> dict[str, int]:
+        """获取过去 N 秒内的调用次数 (总数、成功、失败)"""
+        cutoff_time = get_now(settings) - datetime.timedelta(seconds=seconds)
+        return await self.get_calls_in_time_range(cutoff_time)
 
     async def get_calls_in_last_minutes(self, minutes: int) -> dict[str, int]:
         """获取过去 N 分钟内的调用次数 (总数、成功、失败)"""
@@ -70,7 +77,7 @@ class StatsService:
     async def get_calls_in_current_month(self) -> dict[str, int]:
         """获取当前自然月内的调用次数 (总数、成功、失败)"""
         try:
-            now = datetime.datetime.now()
+            now = get_now(settings)
             start_of_month = now.replace(
                 day=1, hour=0, minute=0, second=0, microsecond=0
             )
@@ -114,18 +121,44 @@ class StatsService:
             logger.error(f"Failed to get calls in current month: {e}")
             return {"total": 0, "success": 0, "failure": 0}
 
+    async def get_calls_today(self) -> dict[str, int]:
+        """获取从上一个太平洋时间午夜到现在的调用次数"""
+        try:
+            # 获取项目配置的时区
+            project_tz = get_timezone(settings)
+            # 获取太平洋时区
+            pt_tz = pytz.timezone('America/Los_Angeles')
+
+            # 获取太平洋时区的当前时间
+            now_pt = get_now(settings).astimezone(pt_tz)
+            
+            # 计算太平洋时区的今天午夜
+            midnight_pt = now_pt.replace(hour=0, minute=0, second=0, microsecond=0)
+            
+            # 将太平洋午夜时间转换为项目时区
+            start_time_project_tz = midnight_pt.astimezone(project_tz)
+            
+            logger.debug(f"Calculating 'today' stats from {start_time_project_tz} (converted from PT midnight)")
+
+            return await self.get_calls_in_time_range(start_time_project_tz)
+        except Exception as e:
+            logger.error(f"Failed to get calls for today (since PT midnight): {e}")
+            return {"total": 0, "success": 0, "failure": 0}
+
     async def get_api_usage_stats(self) -> dict:
         """获取所有需要的 API 使用统计数据 (总数、成功、失败)"""
         try:
             stats_1m = await self.get_calls_in_last_minutes(1)
             stats_1h = await self.get_calls_in_last_hours(1)
             stats_24h = await self.get_calls_in_last_hours(24)
+            stats_today = await self.get_calls_today()
             stats_month = await self.get_calls_in_current_month()
 
             return {
                 "calls_1m": stats_1m,
                 "calls_1h": stats_1h,
                 "calls_24h": stats_24h,
+                "calls_today": stats_today,
                 "calls_month": stats_month,
             }
         except Exception as e:
@@ -135,6 +168,7 @@ class StatsService:
                 "calls_1m": default_stat.copy(),
                 "calls_1h": default_stat.copy(),
                 "calls_24h": default_stat.copy(),
+                "calls_today": default_stat.copy(),
                 "calls_month": default_stat.copy(),
             }
 
@@ -151,13 +185,19 @@ class StatsService:
         Raises:
             ValueError: 如果 period 无效
         """
-        now = datetime.datetime.now()
+        now = get_now(settings)
         if period == "1m":
             start_time = now - datetime.timedelta(minutes=1)
         elif period == "1h":
             start_time = now - datetime.timedelta(hours=1)
         elif period == "24h":
             start_time = now - datetime.timedelta(hours=24)
+        elif period == "today":
+            project_tz = get_timezone(settings)
+            pt_tz = pytz.timezone('America/Los_Angeles')
+            now_pt = get_now(settings).astimezone(pt_tz)
+            midnight_pt = now_pt.replace(hour=0, minute=0, second=0, microsecond=0)
+            start_time = midnight_pt.astimezone(project_tz)
         else:
             raise ValueError(f"无效的时间段标识: {period}")
 
@@ -215,7 +255,7 @@ class StatsService:
         logger.info(
             f"Fetching usage details for key ending in ...{key[-4:]} for the last 24h."
         )
-        cutoff_time = datetime.datetime.now() - datetime.timedelta(hours=24)
+        cutoff_time = get_now(settings) - datetime.timedelta(hours=24)
 
         try:
             query = (

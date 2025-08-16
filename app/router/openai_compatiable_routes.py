@@ -25,10 +25,15 @@ async def get_key_manager():
     return await get_key_manager_instance()
 
 
-async def get_next_working_key_wrapper(
-    key_manager: KeyManager = Depends(get_key_manager),
-):
-    return await key_manager.get_next_working_key()
+async def get_api_key_for_chat(
+    request: ChatRequest,
+    key_manager: KeyManager = Depends(get_key_manager)
+) -> str:
+    """依赖项：为聊天请求获取API密钥"""
+    is_image_chat = request.model == f"{settings.CREATE_IMAGE_MODEL}-chat"
+    if is_image_chat:
+        return await key_manager.get_paid_key()
+    return await key_manager.get_next_working_key(request.model)
 
 
 async def get_openai_service(key_manager: KeyManager = Depends(get_key_manager)):
@@ -56,27 +61,24 @@ async def list_models(
 async def chat_completion(
     request: ChatRequest,
     _=Depends(security_service.verify_authorization),
-    api_key: str = Depends(get_next_working_key_wrapper),
     key_manager: KeyManager = Depends(get_key_manager),
     openai_service: OpenAICompatiableService = Depends(get_openai_service),
+    api_key: str = Depends(get_api_key_for_chat),
 ):
     """处理聊天补全请求，支持流式响应和特定模型切换。"""
     operation_name = "chat_completion"
     is_image_chat = request.model == f"{settings.CREATE_IMAGE_MODEL}-chat"
-    current_api_key = api_key
-    if is_image_chat:
-        current_api_key = await key_manager.get_paid_key()
 
     async with handle_route_errors(logger, operation_name):
         logger.info(f"Handling chat completion request for model: {request.model}")
         logger.debug(f"Request: \n{request.model_dump_json(indent=2)}")
-        logger.info(f"Using API key: {redact_key_for_logging(current_api_key)}")
+        logger.info(f"Using API key: {redact_key_for_logging(api_key)}")
 
         if is_image_chat:
-            response = await openai_service.create_image_chat_completion(request, current_api_key)
+            response = await openai_service.create_image_chat_completion(request, api_key)
             return response
         else:
-            response = await openai_service.create_chat_completion(request, current_api_key)
+            response = await openai_service.create_chat_completion(request, api_key)
             if request.stream:
                 return StreamingResponse(response, media_type="text/event-stream")
             return response
@@ -107,7 +109,7 @@ async def embedding(
     operation_name = "embedding"
     async with handle_route_errors(logger, operation_name):
         logger.info(f"Handling embedding request for model: {request.model}")
-        api_key = await key_manager.get_next_working_key()
+        api_key = await key_manager.get_next_working_key(request.model)
         logger.info(f"Using API key: {redact_key_for_logging(api_key)}")
         return await openai_service.create_embeddings(
             input_text=request.input, model=request.model, api_key=api_key

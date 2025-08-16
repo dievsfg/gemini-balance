@@ -4,6 +4,8 @@
 from typing import List, Optional, Dict, Any, Union
 from datetime import datetime, timezone
 from sqlalchemy import func, desc, asc, select, insert, update, delete
+from app.utils.time_utils import get_now
+from app.config.config import settings
 import json
 from app.database.connection import database
 from app.database.models import Settings, ErrorLog, RequestLog, FileRecord, FileState
@@ -72,7 +74,7 @@ async def update_setting(key: str, value: str, description: Optional[str] = None
                 .values(
                     value=value,
                     description=description if description else setting["description"],
-                    updated_at=datetime.now()
+                    updated_at=get_now(settings)
                 )
             )
             await database.execute(query)
@@ -86,8 +88,8 @@ async def update_setting(key: str, value: str, description: Optional[str] = None
                     key=key,
                     value=value,
                     description=description,
-                    created_at=datetime.now(),
-                    updated_at=datetime.now()
+                    created_at=get_now(settings),
+                    updated_at=get_now(settings)
                 )
             )
             await database.execute(query)
@@ -140,7 +142,7 @@ async def add_error_log(
                 model_name=model_name,
                 error_code=error_code,
                 request_msg=request_msg_json,
-                request_time=datetime.now()
+                request_time=get_now(settings)
             )
         )
         await database.execute(query)
@@ -413,7 +415,7 @@ async def add_request_log(
         bool: 是否添加成功
     """
     try:
-        log_time = request_time if request_time else datetime.now()
+        log_time = request_time if request_time else get_now(settings)
 
         query = insert(RequestLog).values(
             request_time=log_time,

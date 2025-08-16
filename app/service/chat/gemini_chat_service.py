@@ -2,7 +2,6 @@
 
 import json
 import re
-import datetime
 import time
 from typing import Any, AsyncGenerator, Dict, List
 from app.config.config import settings
@@ -15,6 +14,7 @@ from app.service.client.api_client import GeminiApiClient
 from app.service.key.key_manager import KeyManager
 from app.database.services import add_error_log, add_request_log, get_file_api_key
 from app.utils.helpers import redact_key_for_logging
+from app.utils.time_utils import get_now
 
 logger = get_gemini_logger()
 
@@ -304,7 +304,7 @@ class GeminiChatService:
         
         payload = _build_payload(model, request)
         start_time = time.perf_counter()
-        request_datetime = datetime.datetime.now()
+        request_datetime = get_now(settings)
         is_success = False
         status_code = None
         response = None
@@ -352,7 +352,7 @@ class GeminiChatService:
         # countTokens API只需要contents
         payload = {"contents": _filter_empty_parts(request.model_dump().get("contents", []))}
         start_time = time.perf_counter()
-        request_datetime = datetime.datetime.now()
+        request_datetime = get_now(settings)
         is_success = False
         status_code = None
         response = None
@@ -416,7 +416,7 @@ class GeminiChatService:
         final_api_key = api_key
 
         while retries < max_retries:
-            request_datetime = datetime.datetime.now()
+            request_datetime = get_now(settings)
             start_time = time.perf_counter()
             current_attempt_key = api_key
             final_api_key = current_attempt_key

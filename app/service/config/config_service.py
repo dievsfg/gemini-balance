@@ -2,7 +2,6 @@
 配置服务模块
 """
 
-import datetime
 import json
 from typing import Any, Dict, List
 
@@ -21,6 +20,7 @@ from app.service.key.key_manager import (
     reset_key_manager_instance,
 )
 from app.service.model.model_service import ModelService
+from app.utils.time_utils import get_now
 
 logger = get_config_routes_logger()
 
@@ -48,7 +48,7 @@ class ConfigService:
 
         settings_to_update: List[Dict[str, Any]] = []
         settings_to_insert: List[Dict[str, Any]] = []
-        now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
+        now = get_now(settings)
 
         # 准备要更新或插入的数据
         for key, value in config_data.items():
