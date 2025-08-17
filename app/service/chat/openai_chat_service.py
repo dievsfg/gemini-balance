@@ -342,6 +342,10 @@ class OpenAIChatService:
             latency_ms = int((end_time - start_time) * 1000)
             logger.info(f"Normal completion finished - Success: {is_success}, Latency: {latency_ms}ms")
             
+            usage_metadata = response.get("usageMetadata", {}) if response else {}
+            prompt_token_count = usage_metadata.get("promptTokenCount")
+            candidates_token_count = usage_metadata.get("candidatesTokenCount")
+            
             await add_request_log(
                 model_name=model,
                 api_key=api_key,
@@ -349,6 +353,8 @@ class OpenAIChatService:
                 status_code=status_code,
                 latency_ms=latency_ms,
                 request_time=request_datetime,
+                prompt_token_count=prompt_token_count,
+                candidates_token_count=candidates_token_count,
             )
 
     async def _fake_stream_logic_impl(
@@ -469,12 +475,13 @@ class OpenAIChatService:
         is_success = False
         status_code = None
         final_api_key = api_key
-
+        usage_metadata = None
+ 
         while retries < max_retries:
             start_time = time.perf_counter()
             request_datetime = get_now(settings)
             current_attempt_key = final_api_key
-
+ 
             try:
                 stream_generator = None
                 if settings.FAKE_STREAM_ENABLED:
@@ -491,10 +498,17 @@ class OpenAIChatService:
                     stream_generator = self._real_stream_logic_impl(
                         model, payload, current_attempt_key
                     )
-
+ 
                 async for chunk_data in stream_generator:
+                    if chunk_data.startswith("data:"):
+                        try:
+                            chunk_json = json.loads(chunk_data[6:])
+                            if chunk_json.get("usage_metadata"):
+                                usage_metadata = chunk_json.get("usage_metadata")
+                        except (json.JSONDecodeError, AttributeError):
+                            pass
                     yield chunk_data
-
+ 
                 yield "data: [DONE]\n\n"
                 logger.info(
                     f"Streaming completed successfully for model: {model}, FakeStream: {settings.FAKE_STREAM_ENABLED}, Attempt: {retries + 1}"
@@ -502,7 +516,7 @@ class OpenAIChatService:
                 is_success = True
                 status_code = 200
                 break
-
+ 
             except Exception as e:
                 retries += 1
                 is_success = False
@@ -510,7 +524,7 @@ class OpenAIChatService:
                 logger.warning(
                     f"Streaming API call failed with error: {error_log_msg}. Attempt {retries} of {max_retries} with key {current_attempt_key}"
                 )
-
+ 
                 match = re.search(r"status code (\d+)", error_log_msg)
                 if match:
                     status_code = int(match.group(1))
@@ -519,7 +533,7 @@ class OpenAIChatService:
                         status_code = 408
                     else:
                         status_code = 500
-
+ 
                 await add_error_log(
                     gemini_key=current_attempt_key,
                     model_name=model,
@@ -528,7 +542,7 @@ class OpenAIChatService:
                     error_code=status_code,
                     request_msg=payload,
                 )
-
+ 
                 if self.key_manager:
                     new_api_key = await self.key_manager.handle_api_failure(
                         current_attempt_key, retries
@@ -548,7 +562,7 @@ class OpenAIChatService:
                         "KeyManager not available, cannot switch API key. Ceasing attempts for this request."
                     )
                     break
-
+ 
                 if retries >= max_retries:
                     logger.error(
                         f"Max retries ({max_retries}) reached for streaming model {model}."
@@ -556,6 +570,10 @@ class OpenAIChatService:
             finally:
                 end_time = time.perf_counter()
                 latency_ms = int((end_time - start_time) * 1000)
+                
+                prompt_token_count = usage_metadata.get("promptTokenCount") if usage_metadata else None
+                candidates_token_count = usage_metadata.get("candidatesTokenCount") if usage_metadata else None
+                
                 await add_request_log(
                     model_name=model,
                     api_key=current_attempt_key,
@@ -563,6 +581,8 @@ class OpenAIChatService:
                     status_code=status_code,
                     latency_ms=latency_ms,
                     request_time=request_datetime,
+                    prompt_token_count=prompt_token_count,
+                    candidates_token_count=candidates_token_count,
                 )
 
         if not is_success:

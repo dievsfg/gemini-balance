@@ -336,13 +336,20 @@ class GeminiChatService:
         finally:
             end_time = time.perf_counter()
             latency_ms = int((end_time - start_time) * 1000)
+            
+            usage_metadata = response.get("usageMetadata", {}) if response else {}
+            prompt_token_count = usage_metadata.get("promptTokenCount")
+            candidates_token_count = usage_metadata.get("candidatesTokenCount")
+            
             await add_request_log(
                 model_name=model,
                 api_key=api_key,
                 is_success=is_success,
                 status_code=status_code,
                 latency_ms=latency_ms,
-                request_time=request_datetime
+                request_time=request_datetime,
+                prompt_token_count=prompt_token_count,
+                candidates_token_count=candidates_token_count
             )
 
     async def count_tokens(
@@ -414,7 +421,8 @@ class GeminiChatService:
         is_success = False
         status_code = None
         final_api_key = api_key
-
+        usage_metadata = None
+ 
         while retries < max_retries:
             request_datetime = get_now(settings)
             start_time = time.perf_counter()
@@ -427,8 +435,11 @@ class GeminiChatService:
                     # print(line)
                     if line.startswith("data:"):
                         line = line[6:]
+                        response_json = json.loads(line)
+                        if response_json.get("usageMetadata"):
+                            usage_metadata = response_json.get("usageMetadata")
                         response_data = self.response_handler.handle_response(
-                            json.loads(line), model, stream=True
+                            response_json, model, stream=True
                         )
                         text = self._extract_text_from_response(response_data)
                         # 如果有文本内容，且开启了流式输出优化器，则使用流式输出优化器处理
@@ -461,7 +472,7 @@ class GeminiChatService:
                     status_code = int(match.group(1))
                 else:
                     status_code = 500
-
+ 
                 await add_error_log(
                     gemini_key=current_attempt_key,
                     model_name=model,
@@ -470,14 +481,14 @@ class GeminiChatService:
                     error_code=status_code,
                     request_msg=payload
                 )
-
+ 
                 api_key = await self.key_manager.handle_api_failure(current_attempt_key, retries)
                 if api_key:
                     logger.info(f"Switched to new API key: {redact_key_for_logging(api_key)}")
                 else:
                     logger.error(f"No valid API key available after {retries} retries.")
                     break
-
+ 
                 if retries >= max_retries:
                     logger.error(
                         f"Max retries ({max_retries}) reached for streaming."
@@ -486,11 +497,17 @@ class GeminiChatService:
             finally:
                 end_time = time.perf_counter()
                 latency_ms = int((end_time - start_time) * 1000)
+                
+                prompt_token_count = usage_metadata.get("promptTokenCount") if usage_metadata else None
+                candidates_token_count = usage_metadata.get("candidatesTokenCount") if usage_metadata else None
+                
                 await add_request_log(
                     model_name=model,
                     api_key=final_api_key,
                     is_success=is_success,
                     status_code=status_code,
                     latency_ms=latency_ms,
-                    request_time=request_datetime
+                    request_time=request_datetime,
+                    prompt_token_count=prompt_token_count,
+                    candidates_token_count=candidates_token_count
                 )
