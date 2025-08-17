@@ -1719,24 +1719,19 @@ async function showApiCallDetails(
         </div>`;
 
   try {
-    const data = await fetchAPI(`/api/stats/details?period=${period}`);
-    if (data) {
-      renderApiCallDetails(
-        data,
+    const [detailsData, modelUsageData] = await Promise.all([
+        fetchAPI(`/api/stats/details?period=${period}`),
+        fetchAPI(`/api/stats/model-usage?period=${period}`)
+    ]);
+
+    renderApiCallDetails(
+        detailsData || [],
         contentArea,
         totalCalls,
         successCalls,
-        failureCalls
-      );
-    } else {
-      renderApiCallDetails(
-        [],
-        contentArea,
-        totalCalls,
-        successCalls,
-        failureCalls
-      ); // Show empty state if no data
-    }
+        failureCalls,
+        modelUsageData || []
+    );
   } catch (apiError) {
     console.error("获取 API 调用详情失败:", apiError);
     contentArea.innerHTML = `
@@ -1757,21 +1752,21 @@ function closeApiCallDetailsModal() {
 
 // 渲染 API 调用详情到模态框
 function renderApiCallDetails(
-  data,
+  detailsData,
   container,
   totalCalls,
   successCalls,
-  failureCalls
+  failureCalls,
+  modelUsageData
 ) {
   let summaryHtml = "";
-  // 只有在提供了这些统计数据时才显示概览
   if (
     totalCalls !== undefined &&
     successCalls !== undefined &&
     failureCalls !== undefined
   ) {
     summaryHtml = `
-        <div class="mb-4 p-3 bg-white dark:bg-gray-700 rounded-lg"> 
+        <div class="mb-4 p-3 bg-white dark:bg-gray-700 rounded-lg">
             <h4 class="font-semibold text-gray-700 dark:text-gray-200 mb-2 text-md border-b pb-1.5 dark:border-gray-600">期间调用概览:</h4>
             <div class="grid grid-cols-3 gap-2 text-center">
                 <div>
@@ -1791,9 +1786,42 @@ function renderApiCallDetails(
     `;
   }
 
-  if (!data || data.length === 0) {
+  let modelUsageHtml = '<div id="modelUsageStats" class="mt-4"></div>';
+  if (modelUsageData && modelUsageData.length > 0) {
+      let tableRows = modelUsageData.map(model => `
+          <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/30">
+              <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300">${model.model_name}</td>
+              <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">${model.call_count}</td>
+              <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                  <div title="输入 (用户到Gemini)"><i class="fas fa-arrow-down"></i> ${model.total_prompt_tokens}</div>
+                  <div title="输出 (Gemini到用户)"><i class="fas fa-arrow-up"></i> ${model.total_candidates_tokens}</div>
+              </td>
+          </tr>
+      `).join('');
+
+      modelUsageHtml = `
+          <div class="mb-4 p-3 bg-white dark:bg-gray-700 rounded-lg">
+              <h4 class="font-semibold text-gray-700 dark:text-gray-200 mb-2 text-md border-b pb-1.5 dark:border-gray-600">模型使用统计:</h4>
+              <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                  <thead class="bg-gray-50 dark:bg-gray-700/50">
+                      <tr>
+                          <th scope="col" class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">模型</th>
+                          <th scope="col" class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">调用次数</th>
+                          <th scope="col" class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider" title="输入 (用户到Gemini) / 输出 (Gemini到用户)">Tokens</th>
+                      </tr>
+                  </thead>
+                  <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+                      ${tableRows}
+                  </tbody>
+              </table>
+          </div>
+      `;
+  }
+
+
+  if (!detailsData || detailsData.length === 0) {
     container.innerHTML =
-      summaryHtml +
+      summaryHtml + modelUsageHtml +
       `
             <div class="text-center py-10 text-gray-500 dark:text-gray-400">
                 <i class="fas fa-info-circle text-3xl"></i>
@@ -1802,22 +1830,22 @@ function renderApiCallDetails(
     return;
   }
 
-  // 创建表格
   let tableHtml = `
+        <h4 class="font-semibold text-gray-700 dark:text-gray-200 mb-2 text-md border-b pb-1.5 dark:border-gray-600">API 调用记录:</h4>
         <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
             <thead class="bg-gray-50 dark:bg-gray-700/50">
                 <tr>
                     <th scope="col" class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">时间</th>
                     <th scope="col" class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">密钥 (部分)</th>
                     <th scope="col" class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">模型</th>
+                    <th scope="col" class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider" title="输入 (用户到Gemini) / 输出 (Gemini到用户)">Tokens</th>
                     <th scope="col" class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">状态</th>
                 </tr>
             </thead>
             <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
     `;
 
-  // 填充表格行
-  data.forEach((call) => {
+  detailsData.forEach((call) => {
     const timestamp = new Date(call.timestamp).toLocaleString();
     const keyDisplay = call.key
       ? `${call.key.substring(0, 4)}...${call.key.substring(
@@ -1838,6 +1866,10 @@ function renderApiCallDetails(
                 <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">${
                   call.model || "N/A"
                 }</td>
+                <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                    <div title="输入 (用户到Gemini)"><i class="fas fa-arrow-down"></i> ${call.prompt_tokens === null ? 'N/A' : call.prompt_tokens}</div>
+                    <div title="输出 (Gemini到用户)"><i class="fas fa-arrow-up"></i> ${call.candidates_tokens === null ? 'N/A' : call.candidates_tokens}</div>
+                </td>
                 <td class="px-4 py-2 whitespace-nowrap text-sm ${statusClass}">
                     <i class="fas ${statusIcon} mr-1"></i>
                     ${call.status}
@@ -1851,7 +1883,7 @@ function renderApiCallDetails(
         </table>
     `;
 
-  container.innerHTML = summaryHtml + tableHtml; // Prepend summary
+  container.innerHTML = summaryHtml + modelUsageHtml + tableHtml;
 }
 
 // --- 密钥使用详情模态框逻辑 ---

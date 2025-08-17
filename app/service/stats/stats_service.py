@@ -208,6 +208,8 @@ class StatsService:
                     RequestLog.api_key.label("key"),
                     RequestLog.model_name.label("model"),
                     RequestLog.status_code,
+                    RequestLog.prompt_token_count,
+                    RequestLog.candidates_token_count,
                 )
                 .where(RequestLog.request_time >= start_time)
                 .order_by(RequestLog.request_time.desc())
@@ -222,12 +224,12 @@ class StatsService:
                     status = "success" if 200 <= row["status_code"] < 300 else "failure"
                 details.append(
                     {
-                        "timestamp": row[
-                            "timestamp"
-                        ].isoformat(),
+                        "timestamp": row["timestamp"].isoformat(),
                         "key": row["key"],
                         "model": row["model"],
                         "status": status,
+                        "prompt_tokens": row["prompt_token_count"],
+                        "candidates_tokens": row["candidates_token_count"],
                     }
                 )
             logger.info(
@@ -238,6 +240,66 @@ class StatsService:
         except Exception as e:
             logger.error(
                 f"Failed to get API call details for period '{period}': {e}")
+    async def get_model_usage_stats(self, period: str) -> list[dict]:
+        """
+        获取指定时间段内按模型统计的调用次数和Token数
+
+        Args:
+            period: 时间段标识 ('1m', '1h', '24h', 'today')
+
+        Returns:
+            A list of dictionaries, each containing model_name, call_count,
+            total_prompt_tokens, and total_candidates_tokens.
+        """
+        now = get_now(settings)
+        if period == "1m":
+            start_time = now - datetime.timedelta(minutes=1)
+        elif period == "1h":
+            start_time = now - datetime.timedelta(hours=1)
+        elif period == "24h":
+            start_time = now - datetime.timedelta(hours=24)
+        elif period == "today":
+            project_tz = get_timezone(settings)
+            pt_tz = pytz.timezone('America/Los_Angeles')
+            now_pt = get_now(settings).astimezone(pt_tz)
+            midnight_pt = now_pt.replace(hour=0, minute=0, second=0, microsecond=0)
+            start_time = midnight_pt.astimezone(project_tz)
+        else:
+            raise ValueError(f"无效的时间段标识: {period}")
+
+        try:
+            query = (
+                select(
+                    RequestLog.model_name,
+                    func.count(RequestLog.id).label("call_count"),
+                    func.sum(RequestLog.prompt_token_count).label("total_prompt_tokens"),
+                    func.sum(RequestLog.candidates_token_count).label("total_candidates_tokens"),
+                )
+                .where(RequestLog.request_time >= start_time, RequestLog.model_name.isnot(None))
+                .group_by(RequestLog.model_name)
+                .order_by(func.count(RequestLog.id).desc())
+            )
+
+            results = await database.fetch_all(query)
+            
+            # Convert results to a list of dictionaries
+            stats = [
+                {
+                    "model_name": row["model_name"],
+                    "call_count": row["call_count"] or 0,
+                    "total_prompt_tokens": row["total_prompt_tokens"] or 0,
+                    "total_candidates_tokens": row["total_candidates_tokens"] or 0,
+                }
+                for row in results
+            ]
+            
+            logger.info(f"Retrieved {len(stats)} model usage stats for period '{period}'")
+            return stats
+
+        except Exception as e:
+            logger.error(f"Failed to get model usage stats for period '{period}': {e}")
+            raise
+
             raise
 
     async def get_key_usage_details_last_24h(self, key: str) -> Union[dict, None]:
