@@ -1902,45 +1902,60 @@ window.showKeyUsageDetails = async function (key) {
     return;
   }
 
-  // renderKeyUsageDetails 变为 showKeyUsageDetails 的局部函数
-  function renderKeyUsageDetails(data, container) {
-    if (!data || Object.keys(data).length === 0) {
-      container.innerHTML = `
-                <div class="text-center py-10 text-gray-500">
-                    <i class="fas fa-info-circle text-3xl"></i>
-                    <p class="mt-2">该密钥在最近24小时内没有调用记录。</p>
-                </div>`;
-      return;
+  function renderKeyUsageDetails(todayData, last24hData, container) {
+    const allModels = new Set([...Object.keys(todayData), ...Object.keys(last24hData)]);
+
+    if (allModels.size === 0) {
+        container.innerHTML = `
+            <div class="text-center py-10 text-gray-500">
+                <i class="fas fa-info-circle text-3xl"></i>
+                <p class="mt-2">该密钥在今日和最近24小时内没有调用记录。</p>
+            </div>`;
+        return;
     }
+
     let tableHtml = `
-            <table class="min-w-full divide-y divide-gray-200">
-                <thead class="bg-gray-50">
-                    <tr>
-                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">模型名称</th>
-                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">调用次数 (24h)</th>
-                    </tr>
-                </thead>
-                <tbody class="bg-white divide-y divide-gray-200">`;
-    const sortedModels = Object.entries(data).sort(
-      ([, countA], [, countB]) => countB - countA
-    );
-    sortedModels.forEach(([model, count]) => {
-      tableHtml += `
+        <table class="min-w-full divide-y divide-gray-200">
+            <thead class="bg-gray-50">
                 <tr>
-                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${model}</td>
-                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${count}</td>
-                </tr>`;
+                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">模型名称</th>
+                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">调用次数 (今日)</th>
+                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider" title="输入 (用户到Gemini) / 输出 (Gemini到用户)">Tokens (今日)</th>
+                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">调用次数 (24h)</th>
+                </tr>
+            </thead>
+            <tbody class="bg-white divide-y divide-gray-200">`;
+
+    const sortedModels = Array.from(allModels).sort((a, b) => {
+        const aTodayCalls = (todayData[a] || {}).call_count || 0;
+        const bTodayCalls = (todayData[b] || {}).call_count || 0;
+        return bTodayCalls - aTodayCalls;
     });
+
+    sortedModels.forEach(model => {
+        const today = todayData[model] || { call_count: 0, total_prompt_tokens: 0, total_candidates_tokens: 0 };
+        const last24h = last24hData[model] || { call_count: 0 };
+
+        tableHtml += `
+            <tr>
+                <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${model}</td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${today.call_count}</td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    <div title="输入 (用户到Gemini)"><i class="fas fa-arrow-down"></i> ${today.total_prompt_tokens}</div>
+                    <div title="输出 (Gemini到用户)"><i class="fas fa-arrow-up"></i> ${today.total_candidates_tokens}</div>
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${last24h.call_count}</td>
+            </tr>`;
+    });
+
     tableHtml += `
-                </tbody>
-            </table>`;
+            </tbody>
+        </table>`;
     container.innerHTML = tableHtml;
   }
 
-  // 设置标题
-  titleElement.textContent = `密钥 ${keyDisplay} - 最近24小时请求详情`;
+  titleElement.textContent = `密钥 ${keyDisplay} - 请求详情`;
 
-  // 显示模态框并设置加载状态
   modal.classList.remove("hidden");
   contentArea.innerHTML = `
         <div class="text-center py-10">
@@ -1949,12 +1964,13 @@ window.showKeyUsageDetails = async function (key) {
         </div>`;
 
   try {
-    const data = await fetchAPI(`/api/key-usage-details/${key}`);
-    if (data) {
-      renderKeyUsageDetails(data, contentArea);
-    } else {
-      renderKeyUsageDetails({}, contentArea); // Show empty state if no data
-    }
+    const [todayData, last24hData] = await Promise.all([
+        fetchAPI(`/api/key-usage-details/${key}?period=today`),
+        fetchAPI(`/api/key-usage-details/${key}?period=24h`)
+    ]);
+    
+    renderKeyUsageDetails(todayData || {}, last24hData || {}, contentArea);
+
   } catch (apiError) {
     console.error("获取密钥使用详情失败:", apiError);
     contentArea.innerHTML = `

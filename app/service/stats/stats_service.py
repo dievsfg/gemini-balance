@@ -302,32 +302,35 @@ class StatsService:
 
             raise
 
-    async def get_key_usage_details_last_24h(self, key: str) -> Union[dict, None]:
+    async def get_key_usage_details(self, key: str, period: str = "24h") -> dict:
         """
-        获取指定 API 密钥在过去 24 小时内按模型统计的调用次数。
-
-        Args:
-            key: 要查询的 API 密钥。
-
-        Returns:
-            一个字典，其中键是模型名称，值是调用次数。
-            如果查询出错或没有找到记录，可能返回 None 或空字典。
-            Example: {"gemini-pro": 10, "gemini-1.5-pro-latest": 5}
+        获取指定API密钥在指定时间段内按模型统计的调用次数和Token数。
         """
-        logger.info(
-            f"Fetching usage details for key ending in ...{key[-4:]} for the last 24h."
-        )
-        cutoff_time = get_now(settings) - datetime.timedelta(hours=24)
+        logger.info(f"Fetching usage details for key ...{key[-4:]} for period '{period}'.")
+        
+        now = get_now(settings)
+        if period == "24h":
+            start_time = now - datetime.timedelta(hours=24)
+        elif period == "today":
+            project_tz = get_timezone(settings)
+            pt_tz = pytz.timezone('America/Los_Angeles')
+            now_pt = now.astimezone(pt_tz)
+            midnight_pt = now_pt.replace(hour=0, minute=0, second=0, microsecond=0)
+            start_time = midnight_pt.astimezone(project_tz)
+        else:
+            raise ValueError(f"Invalid period specified: {period}")
 
         try:
             query = (
                 select(
-                    RequestLog.model_name, func.count(
-                        RequestLog.id).label("call_count")
+                    RequestLog.model_name,
+                    func.count(RequestLog.id).label("call_count"),
+                    func.sum(RequestLog.prompt_token_count).label("total_prompt_tokens"),
+                    func.sum(RequestLog.candidates_token_count).label("total_candidates_tokens"),
                 )
                 .where(
                     RequestLog.api_key == key,
-                    RequestLog.request_time >= cutoff_time,
+                    RequestLog.request_time >= start_time,
                     RequestLog.model_name.isnot(None),
                 )
                 .group_by(RequestLog.model_name)
@@ -337,21 +340,29 @@ class StatsService:
             results = await database.fetch_all(query)
 
             if not results:
-                logger.info(
-                    f"No usage details found for key ending in ...{key[-4:]} in the last 24h."
-                )
+                logger.info(f"No usage details found for key ...{key[-4:]} in period '{period}'.")
                 return {}
 
-            usage_details = {row["model_name"]: row["call_count"]
-                             for row in results}
-            logger.info(
-                f"Successfully fetched usage details for key ending in ...{key[-4:]}: {usage_details}"
-            )
+            usage_details = {
+                row["model_name"]: {
+                    "call_count": row["call_count"] or 0,
+                    "total_prompt_tokens": row["total_prompt_tokens"] or 0,
+                    "total_candidates_tokens": row["total_candidates_tokens"] or 0,
+                }
+                for row in results
+            }
+            logger.info(f"Successfully fetched usage details for key ...{key[-4:]}: {usage_details}")
             return usage_details
 
         except Exception as e:
-            logger.error(
-                f"Failed to get key usage details for key ending in ...{key[-4:]}: {e}",
-                exc_info=True,
-            )
+            logger.error(f"Failed to get key usage details for key ...{key[-4:]} for period '{period}': {e}", exc_info=True)
             raise
+
+    async def get_key_usage_details_last_24h(self, key: str) -> Union[dict, None]:
+        """
+        获取指定 API 密钥在过去 24 小时内按模型统计的调用次数。
+        [兼容旧版]
+        """
+        details = await self.get_key_usage_details(key, period="24h")
+        # 保持旧的返回格式
+        return {model: data["call_count"] for model, data in details.items()}

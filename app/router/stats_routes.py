@@ -58,25 +58,30 @@ async def get_model_usage_stats(period: str):
 @router.get("/key-usage-details/{key}",
             summary="获取指定密钥最近24小时的模型调用次数",
             description="根据提供的 API 密钥，返回过去24小时内每个模型被调用的次数统计。")
-async def get_key_usage_details(key: str):
+async def get_key_usage_details(key: str, period: str = "24h"):
     """
-    Retrieves the model usage count for a specific API key within the last 24 hours.
+    Retrieves the model usage statistics for a specific API key within the specified period.
 
     Args:
         key: The API key to get usage details for.
+        period: The time period ('24h' or 'today').
 
     Returns:
-        A dictionary with model names as keys and their call counts as values.
-        Example: {"gemini-pro": 10, "gemini-1.5-pro-latest": 5}
+        A dictionary with model names as keys and their usage data as values.
+        Example: {"gemini-pro": {"call_count": 10, "total_prompt_tokens": 100, "total_candidates_tokens": 200}}
 
     Raises:
         HTTPException: If an error occurs during data retrieval.
     """
     try:
-        usage_details = await stats_service.get_key_usage_details_last_24h(key)
-        if usage_details is None:
-            return {}
+        if period not in ["24h", "today"]:
+            raise HTTPException(status_code=400, detail="Invalid period specified. Use '24h' or 'today'.")
+            
+        usage_details = await stats_service.get_key_usage_details(key, period)
         return usage_details
+    except ValueError as e:
+        logger.error(f"Invalid period provided for key usage details: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Error fetching key usage details for key {redact_key_for_logging(key)}: {e}")
         raise HTTPException(
