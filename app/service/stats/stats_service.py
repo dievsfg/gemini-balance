@@ -180,7 +180,7 @@ class StatsService:
             period: 时间段标识 ('1m', '1h', '24h')
 
         Returns:
-            包含调用详情的字典列表，每个字典包含 timestamp, key, model, status
+            包含调用详情的字典列表
 
         Raises:
             ValueError: 如果 period 无效
@@ -190,6 +190,8 @@ class StatsService:
             start_time = now - datetime.timedelta(minutes=1)
         elif period == "1h":
             start_time = now - datetime.timedelta(hours=1)
+        elif period == "8h":
+            start_time = now - datetime.timedelta(hours=8)
         elif period == "24h":
             start_time = now - datetime.timedelta(hours=24)
         elif period == "today":
@@ -208,6 +210,7 @@ class StatsService:
                     RequestLog.api_key.label("key"),
                     RequestLog.model_name.label("model"),
                     RequestLog.status_code,
+                    RequestLog.latency_ms,
                     RequestLog.prompt_token_count,
                     RequestLog.candidates_token_count,
                 )
@@ -217,7 +220,7 @@ class StatsService:
 
             results = await database.fetch_all(query)
 
-            details = []
+            details: list[dict] = []
             for row in results:
                 status = "failure"
                 if row["status_code"] is not None:
@@ -228,6 +231,8 @@ class StatsService:
                         "key": row["key"],
                         "model": row["model"],
                         "status": status,
+                        "status_code": row["status_code"],
+                        "latency_ms": row["latency_ms"],
                         "prompt_tokens": row["prompt_token_count"],
                         "candidates_tokens": row["candidates_token_count"],
                     }
@@ -238,18 +243,114 @@ class StatsService:
             return details
 
         except Exception as e:
+            logger.error(f"Failed to get API call details for period '{period}': {e}")
+            raise
+
+    async def get_key_call_details(self, key: str, period: str) -> list[dict]:
+        """获取指定密钥在指定时间段内的调用详情"""
+        now = get_now(settings)
+        if period == "1m":
+            start_time = now - datetime.timedelta(minutes=1)
+        elif period == "1h":
+            start_time = now - datetime.timedelta(hours=1)
+        elif period == "8h":
+            start_time = now - datetime.timedelta(hours=8)
+        elif period == "24h":
+            start_time = now - datetime.timedelta(hours=24)
+        elif period == "today":
+            project_tz = get_timezone(settings)
+            pt_tz = pytz.timezone('America/Los_Angeles')
+            now_pt = get_now(settings).astimezone(pt_tz)
+            midnight_pt = now_pt.replace(hour=0, minute=0, second=0, microsecond=0)
+            start_time = midnight_pt.astimezone(project_tz)
+        else:
+            raise ValueError(f"无效的时间段标识: {period}")
+
+        try:
+            query = (
+                select(
+                    RequestLog.request_time.label("timestamp"),
+                    RequestLog.api_key.label("key"),
+                    RequestLog.model_name.label("model"),
+                    RequestLog.status_code,
+                    RequestLog.latency_ms,
+                    RequestLog.prompt_token_count,
+                    RequestLog.candidates_token_count,
+                )
+                .where(RequestLog.request_time >= start_time, RequestLog.api_key == key)
+                .order_by(RequestLog.request_time.desc())
+            )
+
+            results = await database.fetch_all(query)
+
+            details: list[dict] = []
+            for row in results:
+                status = "failure"
+                if row["status_code"] is not None:
+                    status = "success" if 200 <= row["status_code"] < 300 else "failure"
+
+                record = {
+                    "timestamp": row["timestamp"].isoformat(),
+                    "key": row["key"],
+                    "model": row["model"],
+                    "status": status,
+                    "status_code": row["status_code"],
+                    "latency_ms": row["latency_ms"],
+                    "prompt_tokens": row["prompt_token_count"],
+                    "candidates_tokens": row["candidates_token_count"],
+                }
+
+                details.append(record)
+
+            logger.info(
+                f"Retrieved {len(details)} key call details for key=...{key[-4:] if key else ''} period '{period}'"
+            )
+            return details
+        except Exception as e:
             logger.error(
-                f"Failed to get API call details for period '{period}': {e}")
+                f"Failed to get key call details for key=...{key[-4:] if key else ''} period '{period}': {e}"
+            )
+            raise
+
+    async def get_attention_keys_last_24h(
+        self, include_keys: set[str], limit: int = 20, status_code: int = 429
+    ) -> list[dict]:
+        """返回最近24小时内指定状态码(默认429)最多的Key列表，仅包含include_keys中的Key。"""
+        try:
+            now = get_now(settings)
+            start_time = now - datetime.timedelta(hours=24)
+            if not include_keys:
+                return []
+            query = (
+                select(
+                    RequestLog.api_key.label("key"),
+                    func.count(RequestLog.id).label("count"),
+                )
+                .where(
+                    RequestLog.request_time >= start_time,
+                    RequestLog.status_code == status_code,
+                    RequestLog.api_key.isnot(None),
+                    RequestLog.api_key.in_(list(include_keys)),
+                )
+                .group_by(RequestLog.api_key)
+                .order_by(func.count(RequestLog.id).desc())
+                .limit(limit)
+            )
+            rows = await database.fetch_all(query)
+            return [
+                {"key": row["key"], "count": row["count"], "status_code": status_code}
+                for row in rows
+                if row["key"]
+            ]
+        except Exception as e:
+            logger.error(
+                f"Failed to get attention keys ({status_code}) in last 24h: {e}"
+            )
+            return []
+
     async def get_model_usage_stats(self, period: str) -> list[dict]:
         """
         获取指定时间段内按模型统计的调用次数和Token数
-
-        Args:
-            period: 时间段标识 ('1m', '1h', '24h', 'today')
-
-        Returns:
-            A list of dictionaries, each containing model_name, call_count,
-            total_prompt_tokens, and total_candidates_tokens.
         """
         now = get_now(settings)
         if period == "1m":
@@ -282,7 +383,6 @@ class StatsService:
 
             results = await database.fetch_all(query)
             
-            # Convert results to a list of dictionaries
             stats = [
                 {
                     "model_name": row["model_name"],
@@ -300,8 +400,6 @@ class StatsService:
             logger.error(f"Failed to get model usage stats for period '{period}': {e}")
             raise
 
-            raise
-
     async def get_key_usage_details(self, key: str, period: str = "24h") -> dict:
         """
         获取指定API密钥在指定时间段内按模型统计的调用次数和Token数。
@@ -309,7 +407,11 @@ class StatsService:
         logger.info(f"Fetching usage details for key ...{key[-4:]} for period '{period}'.")
         
         now = get_now(settings)
-        if period == "24h":
+        if period == "1h":
+            start_time = now - datetime.timedelta(hours=1)
+        elif period == "8h":
+            start_time = now - datetime.timedelta(hours=8)
+        elif period == "24h":
             start_time = now - datetime.timedelta(hours=24)
         elif period == "today":
             project_tz = get_timezone(settings)
