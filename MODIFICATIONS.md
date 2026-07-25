@@ -17,7 +17,7 @@
     - [文件 3]：更新 `AccessLogFormatter` 类的 `API_KEY_PATTERNS` 模式列表，追加 `r"\bAQ\.[0-9A-Za-z_-]{30,80}"` 正则规则，确保带新版 Key 的请求写入 Access Log 时自动脱敏打码。
 
 ## 📅 2026-07-25：支持按模型独立轮询与 429 错误模型级隔离
-* **提交版本**：`<Current>`
+* **提交版本**：`b5e97bd`
 * **影响文件**：
   1. `app/exception/exceptions.py`
   2. `app/service/key/key_manager.py`
@@ -48,3 +48,11 @@
     - [文件 11]：修改 Vertex Express 路由中的 `get_next_working_key` 依赖注入，支持按请求模型选择 Vertex Key。
   * **[定时探针恢复优化]**：升级定时检查任务，支持模型级 429 限流恢复。
     - [文件 12]：更新 `check_failed_keys` 定时任务，增加按 `(model_name, key)` 组合发送探针验证，并在验证成功后重置对应模型的失败计数。
+
+## 📅 2026-07-25：修复 Jinja2 模板渲染在新版 Starlette 中的签名兼容问题
+* **提交版本**：`<Current>`
+* **影响文件**：
+  1. `app/router/routes.py`
+* **改动说明**：
+  * **[Starlette 模板渲染语法适配]**：适配新版 Starlette 中 `TemplateResponse` 的函数签名要求。
+    - [文件 1]：更新页面路由 `auth_page`、`keys_page`、`config_page` 和 `logs_page` 中的 `templates.TemplateResponse` 调用格式，显式通过 `request=request, name="..."` 传递参数，解决新版 Starlette 中因旧版位置参数导致的 `TypeError: unhashable type: 'dict'` 异常。
