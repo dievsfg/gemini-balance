@@ -149,8 +149,8 @@ def is_valid_api_key(key: str) -> bool:
     Returns:
         bool: 如果密钥格式有效则返回True
     """
-    # 检查Gemini API密钥格式
-    if key.startswith("AIza"):
+    # 检查Gemini API密钥格式（支持旧版 AIza 与新版 AQ. 格式）
+    if key.startswith("AIza") or key.startswith("AQ."):
         return len(key) >= 30
 
     # 检查OpenAI API密钥格式

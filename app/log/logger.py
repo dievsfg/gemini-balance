@@ -45,6 +45,7 @@ class AccessLogFormatter(logging.Formatter):
     # API key patterns to match in URLs
     API_KEY_PATTERNS = [
         r"\bAIza[0-9A-Za-z_-]{35}",  # Google API keys (like Gemini)
+        r"\bAQ\.[0-9A-Za-z_-]{30,80}",  # New Google API keys (like AQ.xxx)
         r"\bsk-[0-9A-Za-z_-]{20,}",  # OpenAI and general sk- prefixed keys
     ]
 

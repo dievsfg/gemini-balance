@@ -259,3 +259,7 @@ $RECYCLE.BIN/
 
 tests/
 default_db
+
+#diev
+.playwright-mcp/
+AGENTS.md
