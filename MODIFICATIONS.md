@@ -5,7 +5,7 @@
 ---
 
 ## 📅 2026-07-25：Google 新版 API 密钥 (AQ. 前缀) 兼容适配
-* **提交版本**：`<Current>`
+* **提交版本**：`3c98464`
 * **影响文件**：
   1. `app/static/js/config_editor.js`
   2. `app/utils/helpers.py`
@@ -15,3 +15,36 @@
     - [文件 1]：更新 `API_KEY_REGEX` 常量正则表达式，由 `/AIzaSy\S{33}/g` 替换为 `/((AIzaSy\S{33})|(AQ\.[a-zA-Z0-9_\-]{30,80}))/g`，实现前端批量添加与批量删除时对新版密钥的识别与提取。
     - [文件 2]：更新 `is_valid_api_key(key)` 校验函数，新增 `key.startswith("AQ.")` 判断分支，放行长度 >= 30 位的新版合法密钥。
     - [文件 3]：更新 `AccessLogFormatter` 类的 `API_KEY_PATTERNS` 模式列表，追加 `r"\bAQ\.[0-9A-Za-z_-]{30,80}"` 正则规则，确保带新版 Key 的请求写入 Access Log 时自动脱敏打码。
+
+## 📅 2026-07-25：支持按模型独立轮询与 429 错误模型级隔离
+* **提交版本**：`<Current>`
+* **影响文件**：
+  1. `app/exception/exceptions.py`
+  2. `app/service/key/key_manager.py`
+  3. `app/handler/retry_handler.py`
+  4. `app/service/chat/gemini_chat_service.py`
+  5. `app/service/chat/openai_chat_service.py`
+  6. `app/service/chat/vertex_express_chat_service.py`
+  7. `app/service/openai_compatiable/openai_compatiable_service.py`
+  8. `app/router/gemini_routes.py`
+  9. `app/router/openai_routes.py`
+  10. `app/router/openai_compatiable_routes.py`
+  11. `app/router/vertex_express_routes.py`
+  12. `app/scheduler/scheduled_tasks.py`
+* **改动说明**：
+  * **[异常与密钥状态扩展]**：新增 `NoValidKeyError` 异常，并在 `KeyManager` 中实现按模型粒度的独立轮询与错误计数维护。
+    - [文件 1]：定义 `NoValidKeyError` 异常类，当指定模型下无可用 API Key 时触发 429 响应。
+    - [文件 2]：重构 `KeyManager` 类，新增 `model_key_failure_counts` 与 `model_key_cycles` 字典；重构 `get_next_working_key` 支持按模型独立轮询；重构 `handle_api_failure`，判断为 429 或配额耗尽错误时仅增加该 Key 对应模型的失败计数，若全 Key 429 直接抛出异常。
+  * **[错误信息透传与自动切 Key 优化]**：在重试装饰器与各个 Service 中传递模型名称及异常状态码/错误信息。
+    - [文件 3]：更新 `RetryHandler` 装饰器，从调用参数（包括平铺参数及 `request` 对象属性）中提取 `model_name` 并透传至 `handle_api_failure`。
+    - [文件 4]：更新 Gemini Chat 服务在捕捉异常时对 `e.args` 进行防御性解构，并透传 `model_name`、`status_code` 与 `error_msg`。
+    - [文件 5]：更新 OpenAI Chat 服务在捕捉异常时对 `e.args` 进行防御性解构，并透传 `model_name`、`status_code` 与 `error_msg`。
+    - [文件 6]：更新 Vertex Express Chat 服务在捕捉异常时对 `e.args` 进行防御性解构，并透传 `model_name`、`status_code` 与 `error_msg`，调用 `handle_vertex_api_failure`。
+    - [文件 7]：更新 OpenAI 兼容服务在捕捉异常时对 `e.args` 进行防御性解构，并透传 `model_name`、`status_code` 与 `error_msg`。
+  * **[路由层精确选 Key 适配]**：修改路由层依赖注入，自动从 Request 解析 `model_name`。
+    - [文件 8]：修改 `get_next_working_key` 依赖注入函数，从 Request 路径/Query/Body 中提取 `model_name` 并请求专属 Key。
+    - [文件 9]：修改 OpenAI 路由中的 `get_next_working_key_wrapper` 依赖注入，支持按请求模型选择 Key。
+    - [文件 10]：修改 OpenAI 兼容路由中的 `get_next_working_key_wrapper` 依赖注入，支持按请求模型选择 Key。
+    - [文件 11]：修改 Vertex Express 路由中的 `get_next_working_key` 依赖注入，支持按请求模型选择 Vertex Key。
+  * **[定时探针恢复优化]**：升级定时检查任务，支持模型级 429 限流恢复。
+    - [文件 12]：更新 `check_failed_keys` 定时任务，增加按 `(model_name, key)` 组合发送探针验证，并在验证成功后重置对应模型的失败计数。

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.config.config import settings
@@ -28,9 +28,23 @@ async def get_key_manager():
 
 
 async def get_next_working_key_wrapper(
+    request: Request,
     key_manager: KeyManager = Depends(get_key_manager),
 ):
-    return await key_manager.get_next_working_key()
+    model_name = request.path_params.get("model_name") or request.path_params.get("model")
+    if not model_name:
+        model_name = request.query_params.get("model")
+    if not model_name:
+        try:
+            body_bytes = await request.body()
+            if body_bytes:
+                import json
+                body_json = json.loads(body_bytes)
+                if isinstance(body_json, dict):
+                    model_name = body_json.get("model")
+        except Exception:
+            pass
+    return await key_manager.get_next_working_key(model_name=model_name)
 
 
 async def get_openai_service(key_manager: KeyManager = Depends(get_key_manager)):

@@ -67,6 +67,15 @@ class APIKeyError(APIError):
         super().__init__(status_code=401, detail=detail, error_code="api_key_error")
 
 
+class NoValidKeyError(APIError):
+    """没有可用的API Key错误（配额耗尽或失效）"""
+
+    def __init__(self, detail: str = "No valid API key available"):
+        super().__init__(
+            status_code=429, detail=detail, error_code="rate_limit_exceeded"
+        )
+
+
 class ServiceUnavailableError(APIError):
     """服务不可用错误"""
 

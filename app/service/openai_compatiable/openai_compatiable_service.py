@@ -78,8 +78,8 @@ class OpenAICompatiableService:
             return response
         except Exception as e:
             is_success = False
-            status_code = e.args[0]
-            error_log_msg = e.args[1]
+            status_code = e.args[0] if len(e.args) > 0 and isinstance(e.args[0], int) else 500
+            error_log_msg = e.args[1] if len(e.args) > 1 else str(e)
             logger.error(f"Normal API call failed with error: {error_log_msg}")
 
             await add_error_log(
@@ -132,8 +132,8 @@ class OpenAICompatiableService:
             except Exception as e:
                 retries += 1
                 is_success = False
-                status_code = e.args[0]
-                error_log_msg = e.args[1]
+                status_code = e.args[0] if len(e.args) > 0 and isinstance(e.args[0], int) else 500
+                error_log_msg = e.args[1] if len(e.args) > 1 else str(e)
                 logger.warning(
                     f"Streaming API call failed with error: {error_log_msg}. Attempt {retries} of {max_retries}"
                 )
@@ -152,7 +152,11 @@ class OpenAICompatiableService:
 
                 if self.key_manager:
                     api_key = await self.key_manager.handle_api_failure(
-                        current_attempt_key, retries
+                        current_attempt_key,
+                        retries,
+                        model_name=model,
+                        status_code=status_code,
+                        error_msg=error_log_msg,
                     )
                     if api_key:
                         logger.info(

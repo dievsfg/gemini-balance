@@ -35,7 +35,24 @@ class RetryHandler:
                     key_manager = kwargs.get("key_manager")
                     if key_manager:
                         old_key = kwargs.get(self.key_arg)
-                        new_key = await key_manager.handle_api_failure(old_key, retries)
+                        model_name = kwargs.get("model") or kwargs.get("model_name")
+                        if not model_name and "request" in kwargs:
+                            req_obj = kwargs["request"]
+                            if hasattr(req_obj, "model") and getattr(req_obj, "model", None):
+                                model_name = req_obj.model
+                            elif hasattr(req_obj, "model_name") and getattr(req_obj, "model_name", None):
+                                model_name = req_obj.model_name
+                        status_code = getattr(e, "status_code", None) or (
+                            e.args[0] if e.args and isinstance(e.args[0], int) else None
+                        )
+                        error_msg = str(e)
+                        new_key = await key_manager.handle_api_failure(
+                            old_key,
+                            retries,
+                            model_name=model_name,
+                            status_code=status_code,
+                            error_msg=error_msg,
+                        )
                         if new_key:
                             kwargs[self.key_arg] = new_key
                             logger.info(f"Switched to new API key: {redact_key_for_logging(new_key)}")

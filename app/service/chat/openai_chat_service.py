@@ -338,8 +338,8 @@ class OpenAIChatService:
 
         except Exception as e:
             is_success = False
-            status_code = e.args[0]
-            error_log_msg = e.args[1]
+            status_code = e.args[0] if len(e.args) > 0 and isinstance(e.args[0], int) else 500
+            error_log_msg = e.args[1] if len(e.args) > 1 else str(e)
             logger.error(f"API call failed for model {model}: {error_log_msg}")
 
             # 特别记录 max_tokens 相关的错误
@@ -537,8 +537,8 @@ class OpenAIChatService:
             except Exception as e:
                 retries += 1
                 is_success = False
-                status_code = e.args[0]
-                error_log_msg = e.args[1]
+                status_code = e.args[0] if len(e.args) > 0 and isinstance(e.args[0], int) else 500
+                error_log_msg = e.args[1] if len(e.args) > 1 else str(e)
                 logger.warning(
                     f"Streaming API call failed with error: {error_log_msg}. Attempt {retries} of {max_retries} with key {current_attempt_key}"
                 )
@@ -557,7 +557,11 @@ class OpenAIChatService:
 
                 if self.key_manager:
                     new_api_key = await self.key_manager.handle_api_failure(
-                        current_attempt_key, retries
+                        current_attempt_key,
+                        retries,
+                        model_name=model,
+                        status_code=status_code,
+                        error_msg=error_log_msg,
                     )
                     if new_api_key and new_api_key != current_attempt_key:
                         final_api_key = new_api_key
@@ -650,8 +654,8 @@ class OpenAIChatService:
             yield "data: [DONE]\n\n"
         except Exception as e:
             is_success = False
-            status_code = e.args[0]
-            error_log_msg = e.args[1]
+            status_code = e.args[0] if len(e.args) > 0 and isinstance(e.args[0], int) else 500
+            error_log_msg = e.args[1] if len(e.args) > 1 else str(e)
             logger.error(error_log_msg)
             await add_error_log(
                 gemini_key=api_key,
@@ -704,8 +708,8 @@ class OpenAIChatService:
             return result
         except Exception as e:
             is_success = False
-            status_code = e.args[0]
-            error_log_msg = e.args[1]
+            status_code = e.args[0] if len(e.args) > 0 and isinstance(e.args[0], int) else 500
+            error_log_msg = e.args[1] if len(e.args) > 1 else str(e)
             logger.error(error_log_msg)
             await add_error_log(
                 gemini_key=api_key,
