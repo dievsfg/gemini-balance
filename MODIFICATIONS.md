@@ -50,9 +50,21 @@
     - [文件 12]：更新 `check_failed_keys` 定时任务，增加按 `(model_name, key)` 组合发送探针验证，并在验证成功后重置对应模型的失败计数。
 
 ## 📅 2026-07-25：修复 Jinja2 模板渲染在新版 Starlette 中的签名兼容问题
-* **提交版本**：`<Current>`
+* **提交版本**：`6064067`
 * **影响文件**：
   1. `app/router/routes.py`
 * **改动说明**：
   * **[Starlette 模板渲染语法适配]**：适配新版 Starlette 中 `TemplateResponse` 的函数签名要求。
     - [文件 1]：更新页面路由 `auth_page`、`keys_page`、`config_page` 和 `logs_page` 中的 `templates.TemplateResponse` 调用格式，显式通过 `request=request, name="..."` 传递参数，解决新版 Starlette 中因旧版位置参数导致的 `TypeError: unhashable type: 'dict'` 异常。
+
+## 📅 2026-07-26：修复 thinkingBudget 为 0 导致 500 异常的问题
+* **提交版本**：`<Current>`
+* **影响文件**：
+  1. `app/service/chat/gemini_chat_service.py`
+  2. `app/service/chat/openai_chat_service.py`
+  3. `app/service/chat/vertex_express_chat_service.py`
+* **改动说明**：
+  * **[思考参数自动清洗]**：解决客户端请求中 `thinkingBudget: 0` 导致 Gemini 上游 API 报 400 及后端 500 异常。
+    - [文件 1]：更新 `_build_payload` 函数，当客户端指定 `thinkingBudget` 为 `0` 时，自动剥离 `thinkingConfig` 字段，向上游发起标准非思考请求。
+    - [文件 2]：更新 OpenAI Chat 服务的 `_build_payload`，当 `thinkingBudget` 为 `0` 时自动剔除 `thinkingConfig` 字段。
+    - [文件 3]：更新 Vertex Express Chat 服务的 `_build_payload`，当 `thinkingBudget` 为 `0` 时自动剔除 `thinkingConfig` 字段。

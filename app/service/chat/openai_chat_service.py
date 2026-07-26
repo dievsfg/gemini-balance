@@ -223,7 +223,7 @@ def _build_payload(
         if "gemini-2.5-pro" in request.model:
             payload["generationConfig"]["thinkingConfig"] = {"thinkingBudget": 128}
         else:
-            payload["generationConfig"]["thinkingConfig"] = {"thinkingBudget": 0}
+            payload["generationConfig"].pop("thinkingConfig", None)
 
     elif _get_real_model(request.model) in settings.THINKING_BUDGET_MAP:
         if settings.SHOW_THINKING_PROCESS:
@@ -235,6 +235,11 @@ def _build_payload(
             payload["generationConfig"]["thinkingConfig"] = {
                 "thinkingBudget": settings.THINKING_BUDGET_MAP.get(request.model, 1000)
             }
+
+    # 防御性校验：若 thinkingConfig 中包含非法或者为 0 的 thinkingBudget，直接剔除 thinkingConfig 字段
+    tc = payload["generationConfig"].get("thinkingConfig")
+    if isinstance(tc, dict) and tc.get("thinkingBudget") == 0:
+        payload["generationConfig"].pop("thinkingConfig", None)
 
     if (
         instruction

@@ -277,15 +277,18 @@ def _build_payload(model: str, request: GeminiRequest) -> Dict[str, Any]:
         client_thinking_config = request.generationConfig.thinkingConfig
 
     if client_thinking_config is not None:
-        # 客户端提供了思考配置，直接使用
-        payload["generationConfig"]["thinkingConfig"] = client_thinking_config
+        # 客户端提供了思考配置
+        if isinstance(client_thinking_config, dict) and client_thinking_config.get("thinkingBudget") == 0:
+            payload["generationConfig"].pop("thinkingConfig", None)
+        else:
+            payload["generationConfig"]["thinkingConfig"] = client_thinking_config
     else:
         # 客户端没有提供思考配置，使用默认配置
         if model.endswith("-non-thinking"):
             if "gemini-2.5-pro" in model:
                 payload["generationConfig"]["thinkingConfig"] = {"thinkingBudget": 128}
             else:
-                payload["generationConfig"]["thinkingConfig"] = {"thinkingBudget": 0}
+                payload["generationConfig"].pop("thinkingConfig", None)
         elif _get_real_model(model) in settings.THINKING_BUDGET_MAP:
             if settings.SHOW_THINKING_PROCESS:
                 payload["generationConfig"]["thinkingConfig"] = {
@@ -296,6 +299,11 @@ def _build_payload(model: str, request: GeminiRequest) -> Dict[str, Any]:
                 payload["generationConfig"]["thinkingConfig"] = {
                     "thinkingBudget": settings.THINKING_BUDGET_MAP.get(model, 1000)
                 }
+
+    # 防御性校验：若 thinkingConfig 中包含非法或者为 0 的 thinkingBudget，直接剔除 thinkingConfig 字段
+    tc = payload["generationConfig"].get("thinkingConfig")
+    if isinstance(tc, dict) and tc.get("thinkingBudget") == 0:
+        payload["generationConfig"].pop("thinkingConfig", None)
 
     return payload
 
