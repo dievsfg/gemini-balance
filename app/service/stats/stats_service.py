@@ -2,6 +2,7 @@
 
 import datetime
 from typing import Union
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import and_, case, func, or_, select
 
@@ -10,6 +11,14 @@ from app.database.models import RequestLog
 from app.log.logger import get_stats_logger
 
 logger = get_stats_logger()
+
+
+def get_pacific_today_start() -> datetime.datetime:
+    """获取美西太平洋时间（America/Los_Angeles）今天 00:00:00 对应的本地无时区时间"""
+    pacific_tz = ZoneInfo("America/Los_Angeles")
+    now_pacific = datetime.datetime.now(pacific_tz)
+    start_pacific = now_pacific.replace(hour=0, minute=0, second=0, microsecond=0)
+    return start_pacific.astimezone().replace(tzinfo=None)
 
 
 class StatsService:
@@ -114,18 +123,64 @@ class StatsService:
             logger.error(f"Failed to get calls in current month: {e}")
             return {"total": 0, "success": 0, "failure": 0}
 
+    async def get_calls_today_pacific(self) -> dict[str, int]:
+        """获取美西太平洋时间本日内的调用次数 (总数、成功、失败)"""
+        try:
+            start_of_today = get_pacific_today_start()
+            query = select(
+                func.count(RequestLog.id).label("total"),
+                func.sum(
+                    case(
+                        (
+                            and_(
+                                RequestLog.status_code >= 200,
+                                RequestLog.status_code < 300,
+                            ),
+                            1,
+                        ),
+                        else_=0,
+                    )
+                ).label("success"),
+                func.sum(
+                    case(
+                        (
+                            or_(
+                                RequestLog.status_code < 200,
+                                RequestLog.status_code >= 300,
+                            ),
+                            1,
+                        ),
+                        (RequestLog.status_code is None, 1),
+                        else_=0,
+                    )
+                ).label("failure"),
+            ).where(RequestLog.request_time >= start_of_today)
+            result = await database.fetch_one(query)
+            if result:
+                return {
+                    "total": result["total"] or 0,
+                    "success": result["success"] or 0,
+                    "failure": result["failure"] or 0,
+                }
+            return {"total": 0, "success": 0, "failure": 0}
+        except Exception as e:
+            logger.error(f"Failed to get calls today (Pacific time): {e}")
+            return {"total": 0, "success": 0, "failure": 0}
+
     async def get_api_usage_stats(self) -> dict:
         """获取所有需要的 API 使用统计数据 (总数、成功、失败)"""
         try:
             stats_1m = await self.get_calls_in_last_minutes(1)
             stats_1h = await self.get_calls_in_last_hours(1)
             stats_24h = await self.get_calls_in_last_hours(24)
+            stats_today = await self.get_calls_today_pacific()
             stats_month = await self.get_calls_in_current_month()
 
             return {
                 "calls_1m": stats_1m,
                 "calls_1h": stats_1h,
                 "calls_24h": stats_24h,
+                "calls_today": stats_today,
                 "calls_month": stats_month,
             }
         except Exception as e:
@@ -135,6 +190,7 @@ class StatsService:
                 "calls_1m": default_stat.copy(),
                 "calls_1h": default_stat.copy(),
                 "calls_24h": default_stat.copy(),
+                "calls_today": default_stat.copy(),
                 "calls_month": default_stat.copy(),
             }
 
@@ -143,7 +199,7 @@ class StatsService:
         获取指定时间段内的 API 调用详情
 
         Args:
-            period: 时间段标识 ('1m', '1h', '24h')
+            period: 时间段标识 ('1m', '1h', '8h', '24h', 'today')
 
         Returns:
             包含调用详情的字典列表，每个字典包含 timestamp, key, model, status, status_code, latency_ms, error_log_id(可选)
@@ -160,6 +216,8 @@ class StatsService:
             start_time = now - datetime.timedelta(hours=8)
         elif period == "24h":
             start_time = now - datetime.timedelta(hours=24)
+        elif period == "today":
+            start_time = get_pacific_today_start()
         else:
             raise ValueError(f"无效的时间段标识: {period}")
 

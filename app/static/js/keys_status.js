@@ -1905,6 +1905,9 @@ async function showApiCallDetails(
     case "24h":
       periodText = "最近 24 小时";
       break;
+    case "today":
+      periodText = "本日调用";
+      break;
     default:
       periodText = "指定时间段";
   }

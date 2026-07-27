@@ -58,7 +58,7 @@
     - [文件 1]：更新页面路由 `auth_page`、`keys_page`、`config_page` 和 `logs_page` 中的 `templates.TemplateResponse` 调用格式，显式通过 `request=request, name="..."` 传递参数，解决新版 Starlette 中因旧版位置参数导致的 `TypeError: unhashable type: 'dict'` 异常。
 
 ## 📅 2026-07-26：修复 thinkingBudget 为 0 导致 500 异常的问题
-* **提交版本**：`<Current>`
+* **提交版本**：`0e86eff`
 * **影响文件**：
   1. `app/service/chat/gemini_chat_service.py`
   2. `app/service/chat/openai_chat_service.py`
@@ -68,3 +68,17 @@
     - [文件 1]：更新 `_build_payload` 函数，当客户端指定 `thinkingBudget` 为 `0` 时，自动剥离 `thinkingConfig` 字段，向上游发起标准非思考请求。
     - [文件 2]：更新 OpenAI Chat 服务的 `_build_payload`，当 `thinkingBudget` 为 `0` 时自动剔除 `thinkingConfig` 字段。
     - [文件 3]：更新 Vertex Express Chat 服务的 `_build_payload`，当 `thinkingBudget` 为 `0` 时自动剔除 `thinkingConfig` 字段。
+
+## 📅 2026-07-26：新增本日调用统计 (美西太平洋午夜刷新)
+* **提交版本**：`<Current>`
+* **影响文件**：
+  1. `app/service/stats/stats_service.py`
+  2. `app/router/routes.py`
+  3. `app/templates/keys_status.html`
+  4. `app/static/js/keys_status.js`
+* **改动说明**：
+  * **[美西午夜重置统计支持]**：新增基于美西太平洋时间（America/Los_Angeles）零点重置的“本日调用”统计。
+    - [文件 1]：引入 `zoneinfo.ZoneInfo` 实现 `get_pacific_today_start()` 函数；新增 `get_calls_today_pacific` 统计方法并注入 `get_api_usage_stats`；扩展 `get_api_call_details` 支持 `period="today"` 详情查询。
+    - [文件 2]：在页面路由 `keys_page` 的异常兜底数据结构中补全 `calls_today` 字段。
+    - [文件 3]：在概览面板中新增“本日调用”可视化卡片，卡片 title 增加换行备注“(美西太平洋时间0点重置)”。
+    - [文件 4]：在 `showApiCallDetails` 详情弹窗函数中适配 `"today"` 标识的标题展示。
