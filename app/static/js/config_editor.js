@@ -122,6 +122,24 @@ document.addEventListener("DOMContentLoaded", function () {
     });
   }
 
+  // 管理员登录过期时间输入控制与提示换算
+  const sessionExpireInput = document.getElementById("ADMIN_SESSION_EXPIRE");
+  const sessionExpireHint = document.getElementById("ADMIN_SESSION_EXPIRE_hint");
+  if (sessionExpireInput && sessionExpireHint) {
+    const updateSessionHint = function () {
+      let seconds = parseFloat(sessionExpireInput.value);
+      if (isNaN(seconds) || seconds < 300) {
+        sessionExpireHint.textContent = "注意：最小有效值为 300 秒 (5 分钟)。";
+        return;
+      }
+      let hours = (seconds / 3600).toFixed(1);
+      let days = (seconds / 86400).toFixed(1);
+      sessionExpireHint.textContent = `当前设置：${seconds} 秒 (约 ${hours} 小时 / ${days} 天)。`;
+    };
+    sessionExpireInput.addEventListener("input", updateSessionHint);
+    sessionExpireInput.addEventListener("change", updateSessionHint);
+  }
+
   // Toggle switch events
   const toggleSwitches = document.querySelectorAll(".toggle-switch");
   toggleSwitches.forEach((toggleSwitch) => {
@@ -814,6 +832,10 @@ async function initConfig() {
     // --- 结束：处理假流式配置的默认值 ---
 
     populateForm(config);
+    const expireInput = document.getElementById("ADMIN_SESSION_EXPIRE");
+    if (expireInput && expireInput.value) {
+      expireInput.dispatchEvent(new Event("input"));
+    }
     // After populateForm, initialize masking for all populated sensitive fields
     if (configForm) {
       // Ensure form exists

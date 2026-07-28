@@ -1063,6 +1063,24 @@ endblock %} {% block head_extra_styles %}
           </div>
         </div>
 
+        <!-- 管理员登录过期时间 -->
+        <div class="mb-6">
+          <label for="ADMIN_SESSION_EXPIRE" class="block font-semibold mb-2 text-gray-800"
+            >管理员登录过期时间 (秒)
+            <i class="fas fa-question-circle text-gray-400 ml-1 cursor-help" title="控制后台登录会话(Cookie)的有效期，单位为秒。常见参考：3600 = 1小时，86400 = 24小时，604800 = 7天，2592000 = 30天"></i>
+          </label>
+          <input
+            type="number"
+            id="ADMIN_SESSION_EXPIRE"
+            name="ADMIN_SESSION_EXPIRE"
+            min="300"
+            max="31536000"
+            placeholder="默认 3600 (1小时)，最大支持 31536000 (1年)"
+            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 form-input-themed"
+          />
+          <p class="text-xs text-gray-500 mt-1" id="ADMIN_SESSION_EXPIRE_hint">默认：3600秒（1小时）。设置较大数值（如 86400秒/24小时、604800秒/7天）可延长无需重新输入的时长。</p>
+        </div>
+
         <!-- API基础URL -->
         <div class="mb-6">
           <label for="BASE_URL" class="block font-semibold mb-2 text-gray-700"

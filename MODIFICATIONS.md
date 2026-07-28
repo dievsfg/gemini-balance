@@ -70,7 +70,7 @@
     - [文件 3]：更新 Vertex Express Chat 服务的 `_build_payload`，当 `thinkingBudget` 为 `0` 时自动剔除 `thinkingConfig` 字段。
 
 ## 📅 2026-07-26：新增本日调用统计 (美西太平洋午夜刷新)
-* **提交版本**：`<Current>`
+* **提交版本**：`4f5eb81`
 * **影响文件**：
   1. `app/service/stats/stats_service.py`
   2. `app/router/routes.py`
@@ -82,3 +82,17 @@
     - [文件 2]：在页面路由 `keys_page` 的异常兜底数据结构中补全 `calls_today` 字段。
     - [文件 3]：在概览面板中新增“本日调用”可视化卡片，卡片 title 增加换行备注“(美西太平洋时间0点重置)”。
     - [文件 4]：在 `showApiCallDetails` 详情弹窗函数中适配 `"today"` 标识的标题展示。
+
+## 📅 2026-07-28：管理员登录过期时间支持 UI 配置与最大 1 年延长
+* **提交版本**：`<Current>`
+* **影响文件**：
+  1. `app/config/config.py`
+  2. `app/router/routes.py`
+  3. `app/templates/config_editor.html`
+  4. `app/static/js/config_editor.js`
+* **改动说明**：
+  * **[登录过期配置扩展]**：放宽管理员会话过期时间上限并在控制台暴露设置项。
+    - [文件 1]：更新 `ADMIN_SESSION_EXPIRE` 校验规则，上限由 `86400`（24小时）提高至 `31536000`（1年）。
+    - [文件 2]：在 `response.set_cookie` 种植 `auth_token` 时显式指定 `path="/"` 全局作用域。
+    - [文件 3]：在控制台网页配置编辑器中新增“管理员登录过期时间 (秒)”设置输入框与提示文案。
+    - [文件 4]：增加过期时间单位实时换算提示（秒转小时/天）。

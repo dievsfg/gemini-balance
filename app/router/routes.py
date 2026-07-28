@@ -90,6 +90,7 @@ def setup_page_routes(app: FastAPI) -> None:
                     value=auth_token,
                     httponly=True,
                     max_age=settings.ADMIN_SESSION_EXPIRE,
+                    path="/",
                 )
                 return response
             logger.warning("Failed authentication attempt with invalid token")
