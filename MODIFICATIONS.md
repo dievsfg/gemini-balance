@@ -84,7 +84,7 @@
     - [文件 4]：在 `showApiCallDetails` 详情弹窗函数中适配 `"today"` 标识的标题展示。
 
 ## 📅 2026-07-28：管理员登录过期时间支持 UI 配置与最大 1 年延长
-* **提交版本**：`<Current>`
+* **提交版本**：`05b26b6`
 * **影响文件**：
   1. `app/config/config.py`
   2. `app/router/routes.py`
@@ -96,3 +96,26 @@
     - [文件 2]：在 `response.set_cookie` 种植 `auth_token` 时显式指定 `path="/"` 全局作用域。
     - [文件 3]：在控制台网页配置编辑器中新增“管理员登录过期时间 (秒)”设置输入框与提示文案。
     - [文件 4]：增加过期时间单位实时换算提示（秒转小时/天）。
+
+## 📅 2026-09-10：假流式功能增强（Gemini原生支持、异常结束标识拦截与优先等待机制）
+* **提交版本**：`<Current>`
+* **影响文件**：
+  1. `app/config/config.py`
+  2. `app/templates/config_editor.html`
+  3. `app/static/js/config_editor.js`
+  4. `app/service/chat/openai_chat_service.py`
+  5. `app/service/chat/gemini_chat_service.py`
+  6. `app/service/chat/vertex_express_chat_service.py`
+  7. `app/handler/response_handler.py`
+* **改动说明**：
+  * **[假流式配置项扩展]**：新增 Gemini 原生假流式、异常结束标识校验与优先等待上游配置项。
+    - [文件 1]：在 `Settings` 配置类中新增 `GEMINI_FAKE_STREAM_ENABLED`、`FAKE_STREAM_CHECK_FINISH_REASON`、`FAKE_STREAM_WAIT_UPSTREAM_ENABLED` 与 `FAKE_STREAM_MAX_WAIT_SECONDS` 字段。
+    - [文件 2]：在配置编辑器前端界面假流式配置卡片中新增上述配置的开关与数值输入控件及提示说明。
+    - [文件 3]：在前端脚本中完善新增假流式配置项的默认值初始化、表单数据回显与保存提交逻辑。
+  * **[OpenAI 假流式错误拦截与等待优化]**：支持优先等待上游响应并在异常时直返 HTTP 错误或下发 SSE 错误结构体。
+    - [文件 4]：在 `_fake_stream_logic_impl` 中实现优先等待上游返回机制，未发心跳前发生异常直接抛错由路由返回 HTTP 400/500 JSON，已发心跳后发生异常按方案1下发标准 OpenAI SSE Error 数据块。
+  * **[Gemini 原生假流式及异常拦截]**：为 Gemini 原生流式接口实现完整的伪流式、心跳保活与错误拦截机制。
+    - [文件 5]：新增 `_fake_stream_logic_impl` 与 `_real_stream_logic_impl` 分流逻辑，支持保活心跳、未发心跳直返 HTTP 错误及已发心跳下发 Gemini 标准 SSE 错误包。
+    - [文件 6]：同步为 Vertex 原生流式接口实现假流式分流、优先等待及异常拦截逻辑。
+  * **[多 Part 响应解析与思考分离修复]**：修复假流式与流式下多 parts 内容被截断或错误覆盖思考标记的问题。
+    - [文件 7]：在 `_extract_result` 中统一遍历全部 parts 分离提取思考过程（`thought: True`）与正式正文，并在 `_handle_gemini_stream_response` 中独立构建思考与正文 parts 列表。

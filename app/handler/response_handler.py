@@ -205,71 +205,49 @@ def _extract_result(
 ) -> tuple[str, Optional[str], List[Dict[str, Any]], Optional[bool]]:
     text, reasoning_content, tool_calls, thought = "", "", [], None
 
-    if stream:
-        if response.get("candidates"):
-            candidate = response["candidates"][0]
-            content = candidate.get("content", {})
+    if response.get("candidates"):
+        candidate = response["candidates"][0]
+        content = candidate.get("content", {})
+        if content and isinstance(content, dict):
             parts = content.get("parts", [])
             if not parts:
-                logger.warning("No parts found in stream response")
+                logger.warning("No parts found in candidate content")
                 return "", None, [], None
 
-            if "text" in parts[0]:
-                text = parts[0].get("text")
-                if "thought" in parts[0]:
-                    if not gemini_format and settings.SHOW_THINKING_PROCESS:
-                        reasoning_content = text
-                        text = ""
-                    thought = parts[0].get("thought")
-            elif "executableCode" in parts[0]:
-                text = _format_code_block(parts[0]["executableCode"])
-            elif "codeExecution" in parts[0]:
-                text = _format_code_block(parts[0]["codeExecution"])
-            elif "executableCodeResult" in parts[0]:
-                text = _format_execution_result(parts[0]["executableCodeResult"])
-            elif "codeExecutionResult" in parts[0]:
-                text = _format_execution_result(parts[0]["codeExecutionResult"])
-            elif "inlineData" in parts[0]:
-                text = _extract_image_data(parts[0])
-            else:
-                text = ""
-            text = _add_search_link_text(model, candidate, text)
-            tool_calls = _extract_tool_calls(parts, gemini_format)
-    else:
-        if response.get("candidates"):
-            candidate = response["candidates"][0]
-            text, reasoning_content = "", ""
-
-            # 使用安全的访问方式
-            content = candidate.get("content", {})
-
-            if content and isinstance(content, dict):
-                parts = content.get("parts", [])
-
-                if parts:
-                    for part in parts:
-                        if "text" in part:
-                            if "thought" in part and settings.SHOW_THINKING_PROCESS:
-                                reasoning_content += part["text"]
-                            else:
-                                text += part["text"]
-                            if "thought" in part and thought is None:
-                                thought = part.get("thought")
-                        elif "inlineData" in part:
-                            text += _extract_image_data(part)
-                else:
-                    logger.warning(f"No parts found in content for model: {model}")
-            else:
-                logger.error(f"Invalid content structure for model: {model}")
+            for part in parts:
+                if not isinstance(part, dict):
+                    continue
+                if "text" in part:
+                    part_text = part.get("text", "")
+                    if "thought" in part:
+                        if not gemini_format and settings.SHOW_THINKING_PROCESS:
+                            reasoning_content += part_text
+                        elif gemini_format:
+                            reasoning_content += part_text
+                        else:
+                            text += part_text
+                        if thought is None:
+                            thought = part.get("thought")
+                    else:
+                        text += part_text
+                elif "executableCode" in part:
+                    text += _format_code_block(part["executableCode"])
+                elif "codeExecution" in part:
+                    text += _format_code_block(part["codeExecution"])
+                elif "executableCodeResult" in part:
+                    text += _format_execution_result(part["executableCodeResult"])
+                elif "codeExecutionResult" in part:
+                    text += _format_execution_result(part["codeExecutionResult"])
+                elif "inlineData" in part:
+                    text += _extract_image_data(part)
 
             text = _add_search_link_text(model, candidate, text)
-
-            # 安全地获取 parts 用于工具调用提取
-            parts = candidate.get("content", {}).get("parts", [])
             tool_calls = _extract_tool_calls(parts, gemini_format)
         else:
-            logger.warning(f"No candidates found in response for model: {model}")
-            text = "暂无返回"
+            logger.warning(f"Invalid content structure for model: {model}")
+    else:
+        logger.warning(f"No candidates found in response for model: {model}")
+        text = "暂无返回" if not stream else ""
 
     return text, reasoning_content, tool_calls, thought
 
@@ -382,10 +360,17 @@ def _handle_gemini_stream_response(
     if tool_calls:
         content = {"parts": tool_calls, "role": "model"}
     else:
-        part = {"text": text}
-        if thought is not None:
-            part["thought"] = thought
-        content = {"parts": [part], "role": "model"}
+        parts = []
+        if reasoning_content and thought is not None:
+            parts.append({"text": reasoning_content, "thought": thought})
+        if text:
+            parts.append({"text": text})
+        if not parts:
+            if thought is not None:
+                parts.append({"text": "", "thought": thought})
+            else:
+                parts.append({"text": ""})
+        content = {"parts": parts, "role": "model"}
     response["candidates"][0]["content"] = content
     return response
 
@@ -404,10 +389,15 @@ def _handle_gemini_normal_response(
     if tool_calls:
         parts = tool_calls
     else:
-        if thought is not None:
+        if reasoning_content and thought is not None:
             parts.append({"text": reasoning_content, "thought": thought})
-        part = {"text": text}
-        parts.append(part)
+        if text:
+            parts.append({"text": text})
+        if not parts:
+            if thought is not None:
+                parts.append({"text": "", "thought": thought})
+            else:
+                parts.append({"text": ""})
     content = {"parts": parts, "role": "model"}
     response["candidates"][0]["content"] = content
     return response

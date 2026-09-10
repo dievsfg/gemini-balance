@@ -826,6 +826,18 @@ async function initConfig() {
     if (typeof config.FAKE_STREAM_ENABLED === "undefined") {
       config.FAKE_STREAM_ENABLED = false;
     }
+    if (typeof config.GEMINI_FAKE_STREAM_ENABLED === "undefined") {
+      config.GEMINI_FAKE_STREAM_ENABLED = false;
+    }
+    if (typeof config.FAKE_STREAM_CHECK_FINISH_REASON === "undefined") {
+      config.FAKE_STREAM_CHECK_FINISH_REASON = false;
+    }
+    if (typeof config.FAKE_STREAM_WAIT_UPSTREAM_ENABLED === "undefined") {
+      config.FAKE_STREAM_WAIT_UPSTREAM_ENABLED = false;
+    }
+    if (typeof config.FAKE_STREAM_MAX_WAIT_SECONDS === "undefined") {
+      config.FAKE_STREAM_MAX_WAIT_SECONDS = 5;
+    }
     if (typeof config.FAKE_STREAM_EMPTY_DATA_INTERVAL_SECONDS === "undefined") {
       config.FAKE_STREAM_EMPTY_DATA_INTERVAL_SECONDS = 5;
     }
@@ -874,6 +886,10 @@ async function initConfig() {
       AUTO_DELETE_REQUEST_LOGS_DAYS: 30, // 新增默认值
       // --- 新增：处理假流式配置的默认值 ---
       FAKE_STREAM_ENABLED: false,
+      GEMINI_FAKE_STREAM_ENABLED: false,
+      FAKE_STREAM_CHECK_FINISH_REASON: false,
+      FAKE_STREAM_WAIT_UPSTREAM_ENABLED: false,
+      FAKE_STREAM_MAX_WAIT_SECONDS: 5,
       FAKE_STREAM_EMPTY_DATA_INTERVAL_SECONDS: 5,
       // --- 结束：处理假流式配置的默认值 ---
     };
@@ -1114,19 +1130,43 @@ function populateForm(config) {
   const fakeStreamEnabledCheckbox = document.getElementById(
     "FAKE_STREAM_ENABLED"
   );
+  const geminiFakeStreamEnabledCheckbox = document.getElementById(
+    "GEMINI_FAKE_STREAM_ENABLED"
+  );
+  const fakeStreamCheckFinishReasonCheckbox = document.getElementById(
+    "FAKE_STREAM_CHECK_FINISH_REASON"
+  );
+  const fakeStreamWaitUpstreamCheckbox = document.getElementById(
+    "FAKE_STREAM_WAIT_UPSTREAM_ENABLED"
+  );
+  const fakeStreamMaxWaitInput = document.getElementById(
+    "FAKE_STREAM_MAX_WAIT_SECONDS"
+  );
   const fakeStreamIntervalInput = document.getElementById(
     "FAKE_STREAM_EMPTY_DATA_INTERVAL_SECONDS"
   );
 
-  if (fakeStreamEnabledCheckbox && fakeStreamIntervalInput) {
+  if (fakeStreamEnabledCheckbox) {
     fakeStreamEnabledCheckbox.checked = !!config.FAKE_STREAM_ENABLED;
+  }
+  if (geminiFakeStreamEnabledCheckbox) {
+    geminiFakeStreamEnabledCheckbox.checked =
+      !!config.GEMINI_FAKE_STREAM_ENABLED;
+  }
+  if (fakeStreamCheckFinishReasonCheckbox) {
+    fakeStreamCheckFinishReasonCheckbox.checked =
+      !!config.FAKE_STREAM_CHECK_FINISH_REASON;
+  }
+  if (fakeStreamWaitUpstreamCheckbox) {
+    fakeStreamWaitUpstreamCheckbox.checked =
+      !!config.FAKE_STREAM_WAIT_UPSTREAM_ENABLED;
+  }
+  if (fakeStreamMaxWaitInput) {
+    fakeStreamMaxWaitInput.value = config.FAKE_STREAM_MAX_WAIT_SECONDS || 5;
+  }
+  if (fakeStreamIntervalInput) {
     fakeStreamIntervalInput.value =
       config.FAKE_STREAM_EMPTY_DATA_INTERVAL_SECONDS || 5;
-    // 根据复选框状态设置输入框的禁用状态 (如果需要)
-    // fakeStreamIntervalInput.disabled = !fakeStreamEnabledCheckbox.checked;
-    // fakeStreamEnabledCheckbox.addEventListener("change", function () {
-    //   fakeStreamIntervalInput.disabled = !this.checked;
-    // });
   }
   // --- 结束：处理假流式配置的字段 ---
 }
@@ -2091,6 +2131,36 @@ function collectFormData() {
   );
   if (fakeStreamEnabledCheckbox) {
     formData["FAKE_STREAM_ENABLED"] = fakeStreamEnabledCheckbox.checked;
+  }
+  const geminiFakeStreamEnabledCheckbox = document.getElementById(
+    "GEMINI_FAKE_STREAM_ENABLED"
+  );
+  if (geminiFakeStreamEnabledCheckbox) {
+    formData["GEMINI_FAKE_STREAM_ENABLED"] =
+      geminiFakeStreamEnabledCheckbox.checked;
+  }
+  const fakeStreamCheckFinishReasonCheckbox = document.getElementById(
+    "FAKE_STREAM_CHECK_FINISH_REASON"
+  );
+  if (fakeStreamCheckFinishReasonCheckbox) {
+    formData["FAKE_STREAM_CHECK_FINISH_REASON"] =
+      fakeStreamCheckFinishReasonCheckbox.checked;
+  }
+  const fakeStreamWaitUpstreamCheckbox = document.getElementById(
+    "FAKE_STREAM_WAIT_UPSTREAM_ENABLED"
+  );
+  if (fakeStreamWaitUpstreamCheckbox) {
+    formData["FAKE_STREAM_WAIT_UPSTREAM_ENABLED"] =
+      fakeStreamWaitUpstreamCheckbox.checked;
+  }
+  const fakeStreamMaxWaitInput = document.getElementById(
+    "FAKE_STREAM_MAX_WAIT_SECONDS"
+  );
+  if (fakeStreamMaxWaitInput) {
+    formData["FAKE_STREAM_MAX_WAIT_SECONDS"] = parseInt(
+      fakeStreamMaxWaitInput.value,
+      10
+    );
   }
   const fakeStreamIntervalInput = document.getElementById(
     "FAKE_STREAM_EMPTY_DATA_INTERVAL_SECONDS"

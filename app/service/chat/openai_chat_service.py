@@ -396,13 +396,19 @@ class OpenAIChatService:
             self.api_client.generate_content(payload, model, api_key)
         )
 
-        i = 0
+        has_yielded_heartbeat = False
+        heartbeat_interval = max(1, settings.FAKE_STREAM_EMPTY_DATA_INTERVAL_SECONDS)
+
         try:
-            while not api_response_task.done():
-                i = i + 1
-                """定期发送空数据以保持连接"""
-                if i >= settings.FAKE_STREAM_EMPTY_DATA_INTERVAL_SECONDS:
-                    i = 0
+            if settings.FAKE_STREAM_WAIT_UPSTREAM_ENABLED:
+                max_wait_seconds = max(1, settings.FAKE_STREAM_MAX_WAIT_SECONDS)
+                waited = 0
+                while not api_response_task.done() and waited < max_wait_seconds:
+                    await asyncio.sleep(1)
+                    waited += 1
+
+                if not api_response_task.done():
+                    # 超过最大等待时间，发送首个心跳包并进入心跳循环
                     empty_chunk = self.response_handler.handle_response(
                         {},
                         model,
@@ -411,35 +417,128 @@ class OpenAIChatService:
                         usage_metadata=None,
                     )
                     yield f"data: {json.dumps(empty_chunk)}\n\n"
-                    logger.debug("Sent empty data chunk for fake stream heartbeat.")
-                await asyncio.sleep(1)
+                    has_yielded_heartbeat = True
+                    logger.debug(
+                        "Initial wait timed out. Sent first empty data chunk for fake stream heartbeat."
+                    )
+
+                    i = 0
+                    while not api_response_task.done():
+                        await asyncio.sleep(1)
+                        if not api_response_task.done():
+                            i += 1
+                            if i >= heartbeat_interval:
+                                i = 0
+                                empty_chunk = self.response_handler.handle_response(
+                                    {},
+                                    model,
+                                    stream=True,
+                                    finish_reason="stop",
+                                    usage_metadata=None,
+                                )
+                                yield f"data: {json.dumps(empty_chunk)}\n\n"
+                                logger.debug(
+                                    "Sent empty data chunk for fake stream heartbeat."
+                                )
+            else:
+                i = 0
+                while not api_response_task.done():
+                    await asyncio.sleep(1)
+                    if not api_response_task.done():
+                        i += 1
+                        if i >= heartbeat_interval:
+                            i = 0
+                            empty_chunk = self.response_handler.handle_response(
+                                {},
+                                model,
+                                stream=True,
+                                finish_reason="stop",
+                                usage_metadata=None,
+                            )
+                            yield f"data: {json.dumps(empty_chunk)}\n\n"
+                            has_yielded_heartbeat = True
+                            logger.debug(
+                                "Sent empty data chunk for fake stream heartbeat."
+                            )
         finally:
             response = await api_response_task
 
-        if response and response.get("candidates"):
-            response = self.response_handler.handle_response(
-                response,
-                model,
-                stream=True,
-                finish_reason="stop",
-                usage_metadata=response.get("usageMetadata", {}),
-            )
-            yield f"data: {json.dumps(response)}\n\n"
-            logger.info(f"Sent full response content for fake stream: {model}")
-        else:
-            error_message = "Failed to get response from model"
-            if response and isinstance(response, dict) and response.get("error"):
-                error_details = response.get("error")
-                if isinstance(error_details, dict):
-                    error_message = error_details.get("message", error_message)
+        candidates = (
+            response.get("candidates", []) if isinstance(response, dict) else []
+        )
+        candidate = candidates[0] if candidates else {}
+        finish_reason = candidate.get("finishReason")
 
+        is_abnormal = False
+        error_msg = ""
+
+        if not response or not candidates:
+            is_abnormal = True
+            error_msg = "No candidates returned from model"
+            if isinstance(response, dict) and response.get("error"):
+                err_info = response.get("error")
+                error_msg = (
+                    err_info.get("message", error_msg)
+                    if isinstance(err_info, dict)
+                    else str(err_info)
+                )
+            elif isinstance(response, dict) and response.get("promptFeedback"):
+                error_msg = f"Prompt blocked: {response.get('promptFeedback')}"
+        elif (
+            settings.FAKE_STREAM_CHECK_FINISH_REASON
+            and finish_reason
+            and finish_reason != "STOP"
+        ):
+            is_abnormal = True
+            error_msg = (
+                f"Stream generation finished with abnormal finishReason: {finish_reason}"
+            )
+
+        if is_abnormal:
             logger.error(
-                f"No candidates or error in response for fake stream model {model}: {response}"
+                f"Fake stream abnormal response for model {model} (has_yielded_heartbeat={has_yielded_heartbeat}): {error_msg}"
             )
-            error_chunk = self.response_handler.handle_response(
-                {}, model, stream=True, finish_reason="stop", usage_metadata=None
-            )
-            yield f"data: {json.dumps(error_chunk)}\n\n"
+            if not has_yielded_heartbeat:
+                # 未向客户端发送任何数据包，直接抛出异常，由路由层返回 HTTP 400/500 JSON 错误
+                raise Exception(400, error_msg)
+            else:
+                # 已发送过心跳包，通过 SSE 下发方案1的标准错误包
+                error_chunk = {
+                    "error": {
+                        "message": error_msg,
+                        "type": (
+                            "abnormal_finish_reason"
+                            if finish_reason and finish_reason != "STOP"
+                            else "api_error"
+                        ),
+                        "code": 400,
+                    }
+                }
+                yield f"data: {json.dumps(error_chunk)}\n\n"
+                return
+
+        openai_response = self.response_handler.handle_response(
+            response,
+            model,
+            stream=True,
+            finish_reason="stop",
+            usage_metadata=response.get("usageMetadata", {}),
+        )
+        if openai_response:
+            text = self._extract_text_from_openai_chunk(openai_response)
+            if text and settings.STREAM_OPTIMIZER_ENABLED:
+                async for (
+                    optimized_chunk_data
+                ) in openai_optimizer.optimize_stream_output(
+                    text,
+                    lambda t: self._create_char_openai_chunk(openai_response, t),
+                    lambda c: f"data: {json.dumps(c)}\n\n",
+                ):
+                    yield optimized_chunk_data
+                yield f"data: {json.dumps(self.response_handler.handle_response({}, model, stream=True, finish_reason='stop', usage_metadata=response.get('usageMetadata', {})))}\n\n"
+            else:
+                yield f"data: {json.dumps(openai_response)}\n\n"
+                logger.info(f"Sent full response content for fake stream: {model}")
 
     async def _real_stream_logic_impl(
         self, model: str, payload: Dict[str, Any], api_key: str

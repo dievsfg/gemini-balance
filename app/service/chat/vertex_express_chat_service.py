@@ -1,5 +1,6 @@
 # app/services/chat_service.py
 
+import asyncio
 import datetime
 import json
 import time
@@ -311,6 +312,186 @@ class GeminiChatService:
                 request_time=request_datetime,
             )
 
+    async def _fake_stream_logic_impl(
+        self, model: str, payload: Dict[str, Any], api_key: str
+    ) -> AsyncGenerator[str, None]:
+        """处理 Vertex Gemini 伪流式 (fake stream) 的核心逻辑"""
+        logger.info(
+            f"Fake streaming enabled for Vertex model: {model}. Calling non-streaming endpoint."
+        )
+
+        api_response_task = asyncio.create_task(
+            self.api_client.generate_content(payload, model, api_key)
+        )
+
+        has_yielded_heartbeat = False
+        heartbeat_interval = max(1, settings.FAKE_STREAM_EMPTY_DATA_INTERVAL_SECONDS)
+
+        try:
+            if settings.FAKE_STREAM_WAIT_UPSTREAM_ENABLED:
+                max_wait_seconds = max(1, settings.FAKE_STREAM_MAX_WAIT_SECONDS)
+                waited = 0
+                while not api_response_task.done() and waited < max_wait_seconds:
+                    await asyncio.sleep(1)
+                    waited += 1
+
+                if not api_response_task.done():
+                    # 超过最大等待时间，发送首个心跳包并进入心跳循环
+                    empty_chunk = {
+                        "candidates": [
+                            {"content": {"parts": [], "role": "model"}, "index": 0}
+                        ]
+                    }
+                    yield f"data: {json.dumps(empty_chunk)}\n\n"
+                    has_yielded_heartbeat = True
+                    logger.debug(
+                        "Initial wait timed out. Sent first empty data chunk for Vertex fake stream heartbeat."
+                    )
+
+                    i = 0
+                    while not api_response_task.done():
+                        await asyncio.sleep(1)
+                        if not api_response_task.done():
+                            i += 1
+                            if i >= heartbeat_interval:
+                                i = 0
+                                empty_chunk = {
+                                    "candidates": [
+                                        {
+                                            "content": {
+                                                "parts": [],
+                                                "role": "model",
+                                            },
+                                            "index": 0,
+                                        }
+                                    ]
+                                }
+                                yield f"data: {json.dumps(empty_chunk)}\n\n"
+                                logger.debug(
+                                    "Sent empty data chunk for Vertex fake stream heartbeat."
+                                )
+            else:
+                i = 0
+                while not api_response_task.done():
+                    await asyncio.sleep(1)
+                    if not api_response_task.done():
+                        i += 1
+                        if i >= heartbeat_interval:
+                            i = 0
+                            empty_chunk = {
+                                "candidates": [
+                                    {
+                                        "content": {
+                                            "parts": [],
+                                            "role": "model",
+                                        },
+                                        "index": 0,
+                                    }
+                                ]
+                            }
+                            yield f"data: {json.dumps(empty_chunk)}\n\n"
+                            has_yielded_heartbeat = True
+                            logger.debug(
+                                "Sent empty data chunk for Vertex fake stream heartbeat."
+                            )
+        finally:
+            response = await api_response_task
+
+        candidates = (
+            response.get("candidates", []) if isinstance(response, dict) else []
+        )
+        candidate = candidates[0] if candidates else {}
+        finish_reason = candidate.get("finishReason")
+
+        is_abnormal = False
+        error_msg = ""
+
+        if not response or not candidates:
+            is_abnormal = True
+            error_msg = "No candidates returned from model"
+            if isinstance(response, dict) and response.get("error"):
+                err_info = response.get("error")
+                error_msg = (
+                    err_info.get("message", error_msg)
+                    if isinstance(err_info, dict)
+                    else str(err_info)
+                )
+            elif isinstance(response, dict) and response.get("promptFeedback"):
+                error_msg = f"Prompt blocked: {response.get('promptFeedback')}"
+        elif (
+            settings.FAKE_STREAM_CHECK_FINISH_REASON
+            and finish_reason
+            and finish_reason != "STOP"
+        ):
+            is_abnormal = True
+            error_msg = (
+                f"Stream generation finished with abnormal finishReason: {finish_reason}"
+            )
+
+        if is_abnormal:
+            logger.error(
+                f"Fake stream abnormal response for Vertex model {model} (has_yielded_heartbeat={has_yielded_heartbeat}): {error_msg}"
+            )
+            if not has_yielded_heartbeat:
+                # 未向客户端发送任何数据包，直接抛出异常，由路由层返回 HTTP 400/500 JSON 错误
+                raise Exception(400, error_msg)
+            else:
+                # 已发送过心跳包，通过 SSE 下发 Gemini 格式的标准错误包
+                error_chunk = {
+                    "error": {
+                        "code": 400,
+                        "message": error_msg,
+                        "status": (
+                            "ABNORMAL_FINISH_REASON"
+                            if finish_reason and finish_reason != "STOP"
+                            else "API_ERROR"
+                        ),
+                    }
+                }
+                yield f"data: {json.dumps(error_chunk)}\n\n"
+                return
+
+        response_data = self.response_handler.handle_response(
+            response, model, stream=True
+        )
+        text = self._extract_text_from_response(response_data)
+        if text and settings.STREAM_OPTIMIZER_ENABLED:
+            async for (
+                optimized_chunk
+            ) in gemini_optimizer.optimize_stream_output(
+                text,
+                lambda t: self._create_char_response(response_data, t),
+                lambda c: "data: " + json.dumps(c) + "\n\n",
+            ):
+                yield optimized_chunk
+        else:
+            yield "data: " + json.dumps(response_data) + "\n\n"
+
+    async def _real_stream_logic_impl(
+        self, model: str, payload: Dict[str, Any], api_key: str
+    ) -> AsyncGenerator[str, None]:
+        """处理 Vertex Gemini 真实流式 (real stream) 的核心逻辑"""
+        async for line in self.api_client.stream_generate_content(
+            payload, model, api_key
+        ):
+            if line.startswith("data:"):
+                line_content = line[6:]
+                response_data = self.response_handler.handle_response(
+                    json.loads(line_content), model, stream=True
+                )
+                text = self._extract_text_from_response(response_data)
+                if text and settings.STREAM_OPTIMIZER_ENABLED:
+                    async for (
+                        optimized_chunk
+                    ) in gemini_optimizer.optimize_stream_output(
+                        text,
+                        lambda t: self._create_char_response(response_data, t),
+                        lambda c: "data: " + json.dumps(c) + "\n\n",
+                    ):
+                        yield optimized_chunk
+                else:
+                    yield "data: " + json.dumps(response_data) + "\n\n"
+
     async def stream_generate_content(
         self, model: str, request: GeminiRequest, api_key: str
     ) -> AsyncGenerator[str, None]:
@@ -328,30 +509,25 @@ class GeminiChatService:
             current_attempt_key = api_key
             final_api_key = current_attempt_key  # Update final key used
             try:
-                async for line in self.api_client.stream_generate_content(
-                    payload, model, current_attempt_key
-                ):
-                    # print(line)
-                    if line.startswith("data:"):
-                        line = line[6:]
-                        response_data = self.response_handler.handle_response(
-                            json.loads(line), model, stream=True
-                        )
-                        text = self._extract_text_from_response(response_data)
-                        # 如果有文本内容，且开启了流式输出优化器，则使用流式输出优化器处理
-                        if text and settings.STREAM_OPTIMIZER_ENABLED:
-                            # 使用流式输出优化器处理文本输出
-                            async for (
-                                optimized_chunk
-                            ) in gemini_optimizer.optimize_stream_output(
-                                text,
-                                lambda t: self._create_char_response(response_data, t),
-                                lambda c: "data: " + json.dumps(c) + "\n\n",
-                            ):
-                                yield optimized_chunk
-                        else:
-                            # 如果没有文本内容（如工具调用等），整块输出
-                            yield "data: " + json.dumps(response_data) + "\n\n"
+                stream_generator = None
+                if settings.GEMINI_FAKE_STREAM_ENABLED:
+                    logger.info(
+                        f"Using fake stream logic for Vertex model: {model}, Attempt: {retries + 1}"
+                    )
+                    stream_generator = self._fake_stream_logic_impl(
+                        model, payload, current_attempt_key
+                    )
+                else:
+                    logger.info(
+                        f"Using real stream logic for Vertex model: {model}, Attempt: {retries + 1}"
+                    )
+                    stream_generator = self._real_stream_logic_impl(
+                        model, payload, current_attempt_key
+                    )
+
+                async for chunk_data in stream_generator:
+                    yield chunk_data
+
                 logger.info("Streaming completed successfully")
                 is_success = True
                 status_code = 200

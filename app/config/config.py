@@ -124,6 +124,10 @@ class Settings(BaseSettings):
 
     # 假流式配置 (Fake Streaming Configuration)
     FAKE_STREAM_ENABLED: bool = False  # 是否启用假流式输出
+    GEMINI_FAKE_STREAM_ENABLED: bool = False  # 是否对 Gemini 原生接口启用假流式输出
+    FAKE_STREAM_CHECK_FINISH_REASON: bool = False  # 假流式是否校验结束标识异常并报错
+    FAKE_STREAM_WAIT_UPSTREAM_ENABLED: bool = False  # 假流式是否优先等待上游响应
+    FAKE_STREAM_MAX_WAIT_SECONDS: int = 5  # 假流式优先等待上游的最大等待时间（秒）
     FAKE_STREAM_EMPTY_DATA_INTERVAL_SECONDS: int = 5  # 假流式发送空数据的间隔时间（秒）
 
     # 调度器配置
