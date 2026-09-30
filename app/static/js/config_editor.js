@@ -822,6 +822,12 @@ async function initConfig() {
     }
     // --- 结束：处理自动删除请求日志配置的默认值 ---
 
+    // --- 新增：处理重试间隔配置的默认值 ---
+    if (typeof config.RETRY_INTERVALS === "undefined") {
+      config.RETRY_INTERVALS = "";
+    }
+    // --- 结束：处理重试间隔配置的默认值 ---
+
     // --- 新增：处理假流式配置的默认值 ---
     if (typeof config.FAKE_STREAM_ENABLED === "undefined") {
       config.FAKE_STREAM_ENABLED = false;
@@ -884,6 +890,7 @@ async function initConfig() {
       AUTO_DELETE_ERROR_LOGS_DAYS: 7, // 新增默认值
       AUTO_DELETE_REQUEST_LOGS_ENABLED: false, // 新增默认值
       AUTO_DELETE_REQUEST_LOGS_DAYS: 30, // 新增默认值
+      RETRY_INTERVALS: "",
       // --- 新增：处理假流式配置的默认值 ---
       FAKE_STREAM_ENABLED: false,
       GEMINI_FAKE_STREAM_ENABLED: false,

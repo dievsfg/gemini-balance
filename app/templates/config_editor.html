@@ -1250,6 +1250,23 @@ endblock %} {% block head_extra_styles %}
             class="w-full px-4 py-3 rounded-lg form-input-themed"
           />
         </div>
+
+        <!-- 失败重试间隔（秒） -->
+        <div class="mb-6">
+          <label
+            for="RETRY_INTERVALS"
+            class="block font-semibold mb-2 text-gray-700"
+            >失败重试间隔（秒）
+            <i class="fas fa-question-circle text-gray-400 ml-1 cursor-help" title="API请求失败后重试的等待时间（秒）。以空格分隔，支持具体秒数与倍数，例如: '10 20 30'、'10 1.2x 2x' 或 '10 1.2x 2x 40'。若超过设置数量：末尾为具体数值则固定不变，末尾为倍数则按末尾倍数持续递增。留空表示立即重试。"></i>
+          </label>
+          <input
+            type="text"
+            id="RETRY_INTERVALS"
+            name="RETRY_INTERVALS"
+            placeholder="例如: 10 20 30 或 5 1.5x 2x 40，留空为立即重试"
+            class="w-full px-4 py-3 rounded-lg form-input-themed"
+          />
+        </div>
         <!-- 代理服务器列表 -->
         <div class="mb-6">
           <label for="PROXIES" class="block font-semibold mb-2 text-gray-700"

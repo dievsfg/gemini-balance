@@ -21,6 +21,7 @@ from app.log.logger import get_openai_logger
 from app.service.client.api_client import GeminiApiClient
 from app.service.image.image_create_service import ImageCreateService
 from app.service.key.key_manager import KeyManager
+from app.utils.helpers import calculate_retry_delay
 
 logger = get_openai_logger()
 
@@ -606,6 +607,14 @@ class OpenAIChatService:
         final_api_key = api_key
 
         while retries < max_retries:
+            if retries > 0:
+                delay = calculate_retry_delay(retries, settings.RETRY_INTERVALS)
+                if delay > 0:
+                    logger.info(
+                        f"Waiting {delay:.2f}s before streaming retry attempt {retries + 1} for model: {model}..."
+                    )
+                    await asyncio.sleep(delay)
+
             start_time = time.perf_counter()
             request_datetime = datetime.datetime.now()
             current_attempt_key = final_api_key

@@ -98,7 +98,7 @@
     - [文件 4]：增加过期时间单位实时换算提示（秒转小时/天）。
 
 ## 📅 2026-09-10：假流式功能增强（Gemini原生支持、异常结束标识拦截与优先等待机制）
-* **提交版本**：`<Current>`
+* **提交版本**：`15b1553`
 * **影响文件**：
   1. `app/config/config.py`
   2. `app/templates/config_editor.html`
@@ -119,3 +119,29 @@
     - [文件 6]：同步为 Vertex 原生流式接口实现假流式分流、优先等待及异常拦截逻辑。
   * **[多 Part 响应解析与思考分离修复]**：修复假流式与流式下多 parts 内容被截断或错误覆盖思考标记的问题。
     - [文件 7]：在 `_extract_result` 中统一遍历全部 parts 分离提取思考过程（`thought: True`）与正式正文，并在 `_handle_gemini_stream_response` 中独立构建思考与正文 parts 列表。
+
+## 📅 2026-09-10：新增请求失败重试间隔配置（支持序列与倍数退避）
+* **提交版本**：`<Current>`
+* **影响文件**：
+  1. `app/config/config.py`
+  2. `app/utils/helpers.py`
+  3. `app/templates/config_editor.html`
+  4. `app/static/js/config_editor.js`
+  5. `app/handler/retry_handler.py`
+  6. `app/service/chat/openai_chat_service.py`
+  7. `app/service/chat/gemini_chat_service.py`
+  8. `app/service/chat/vertex_express_chat_service.py`
+  9. `app/service/openai_compatiable/openai_compatiable_service.py`
+* **改动说明**：
+  * **[配置项与算法支持]**：添加重试间隔配置项并实现退避序列计算算法。
+    - [文件 1]：在 `Settings` 配置类中新增 `RETRY_INTERVALS` 字段。
+    - [文件 2]：实现 `calculate_retry_delay` 函数，支持具体秒数列表、倍数退避计算与 300 秒安全上限保护。
+  * **[控制台前端呈现]**：在 Web 配置界面暴露重试间隔设置。
+    - [文件 3]：在“最大重试次数”下方新增“失败重试间隔（秒）”输入框及规则说明 Tooltip。
+    - [文件 4]：在前端脚本中补充 `RETRY_INTERVALS` 的默认值初始化。
+  * **[重试等待调用生效]**：在非流式与流式服务重试时加入间隔等待。
+    - [文件 5]：在 `RetryHandler` 装饰器中增加异常重试时的 `asyncio.sleep` 等待。
+    - [文件 6]：在 `OpenAIChatService._handle_stream_completion` 循环中增加重试等待逻辑。
+    - [文件 7]：在 `GeminiChatService.stream_generate_content` 循环中增加重试等待逻辑。
+    - [文件 8]：在 `VertexExpressChatService.stream_generate_content` 循环中增加重试等待逻辑。
+    - [文件 9]：在 `OpenAICompatiableService._handle_stream_completion` 循环中增加重试等待逻辑。

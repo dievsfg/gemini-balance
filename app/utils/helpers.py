@@ -229,3 +229,53 @@ def is_image_upload_configured(settings: Settings) -> bool:
             ]
         )
     return False
+
+
+def calculate_retry_delay(
+    retry_attempt: int, config_str: str, max_delay: float = 300.0
+) -> float:
+    """计算当前重试次数对应的等待间隔时间（秒）。
+
+    参数:
+        retry_attempt: 当前第几次重试（1-based，第1次重试传1，第2次传2...）
+        config_str: 重试间隔配置字符串，以空格分隔（如 "10 20 30" 或 "10 1.2x 2x" 或 "10 1.2x 2x 40"）
+        max_delay: 单次重试最大等待上限（秒），默认 300 秒（5分钟）
+
+    返回:
+        float: 本次重试应等待的秒数（>= 0.0）
+    """
+    if retry_attempt <= 0 or not config_str or not isinstance(config_str, str):
+        return 0.0
+
+    tokens = config_str.strip().split()
+    if not tokens:
+        return 0.0
+
+    current_delay = 0.0
+    last_multiplier = None
+    last_is_multiplier = False
+
+    for i in range(1, retry_attempt + 1):
+        if i - 1 < len(tokens):
+            token = tokens[i - 1].strip()
+            if token.lower().endswith("x"):
+                mult_str = token[:-1].strip()
+                try:
+                    mult = float(mult_str)
+                    current_delay = (current_delay if current_delay > 0 else 1.0) * mult
+                    last_multiplier = mult
+                    last_is_multiplier = True
+                except ValueError:
+                    helper_logger.warning(f"Invalid retry interval multiplier: {token}")
+            else:
+                try:
+                    val = float(token)
+                    current_delay = max(0.0, val)
+                    last_is_multiplier = False
+                except ValueError:
+                    helper_logger.warning(f"Invalid retry interval value: {token}")
+        else:
+            if last_is_multiplier and last_multiplier is not None:
+                current_delay = current_delay * last_multiplier
+
+    return min(max(0.0, current_delay), max_delay)

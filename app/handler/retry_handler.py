@@ -1,10 +1,11 @@
 
+import asyncio
 from functools import wraps
 from typing import Callable, TypeVar
 
 from app.config.config import settings
 from app.log.logger import get_retry_logger
-from app.utils.helpers import redact_key_for_logging
+from app.utils.helpers import calculate_retry_delay, redact_key_for_logging
 
 T = TypeVar("T")
 logger = get_retry_logger()
@@ -56,6 +57,11 @@ class RetryHandler:
                         if new_key:
                             kwargs[self.key_arg] = new_key
                             logger.info(f"Switched to new API key: {redact_key_for_logging(new_key)}")
+                            if retries < settings.MAX_RETRIES:
+                                delay = calculate_retry_delay(retries, settings.RETRY_INTERVALS)
+                                if delay > 0:
+                                    logger.info(f"Waiting {delay:.2f}s before retry attempt {retries + 1}...")
+                                    await asyncio.sleep(delay)
                         else:
                             logger.error(f"No valid API key available after {retries} retries.")
                             break
