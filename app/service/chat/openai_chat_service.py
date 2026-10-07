@@ -309,6 +309,7 @@ class OpenAIChatService:
         is_success = False
         status_code = None
         response = None
+        saved_response = None
 
         try:
             response = await self.api_client.generate_content(payload, model, api_key)
@@ -325,6 +326,7 @@ class OpenAIChatService:
                     finish_reason="stop",
                     usage_metadata=usage_metadata,
                 )
+                saved_response = result
                 return result
             except Exception as response_error:
                 logger.error(
@@ -636,8 +638,25 @@ class OpenAIChatService:
                         model, payload, current_attempt_key
                     )
 
+                accumulated_content = []
+                accumulated_reasoning = []
+                saved_response = None
                 async for chunk_data in stream_generator:
                     yield chunk_data
+                    if chunk_data.startswith("data:"):
+                        chunk_str = chunk_data[5:].strip()
+                        if chunk_str and chunk_str != "[DONE]":
+                            try:
+                                c = json.loads(chunk_str)
+                                choices = c.get("choices", [])
+                                if choices:
+                                    delta = choices[0].get("delta", {})
+                                    if "content" in delta and delta["content"]:
+                                        accumulated_content.append(delta["content"])
+                                    if "reasoning_content" in delta and delta["reasoning_content"]:
+                                        accumulated_reasoning.append(delta["reasoning_content"])
+                            except Exception:
+                                pass
 
                 yield "data: [DONE]\n\n"
                 logger.info(
@@ -645,6 +664,9 @@ class OpenAIChatService:
                 )
                 is_success = True
                 status_code = 200
+                saved_response = {"content": "".join(accumulated_content)}
+                if accumulated_reasoning:
+                    saved_response["reasoning_content"] = "".join(accumulated_reasoning)
                 break
 
             except Exception as e:
@@ -707,6 +729,8 @@ class OpenAIChatService:
                     status_code=status_code,
                     latency_ms=latency_ms,
                     request_time=request_datetime,
+                    request_body=payload,
+                    response_body=saved_response if is_success else None,
                 )
 
     async def create_image_chat_completion(

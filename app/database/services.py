@@ -9,8 +9,16 @@ from typing import Any, Dict, List, Optional, Union
 
 from sqlalchemy import asc, delete, desc, func, insert, select, update
 
+from app.config.config import settings
 from app.database.connection import database
-from app.database.models import ErrorLog, FileRecord, FileState, RequestLog, Settings
+from app.database.models import (
+    ErrorLog,
+    FileRecord,
+    FileState,
+    RequestLog,
+    Settings,
+    SuccessLog,
+)
 from app.log.logger import get_database_logger
 from app.utils.helpers import redact_key_for_logging
 
@@ -497,6 +505,142 @@ async def delete_all_error_logs() -> int:
         raise
 
 
+def _normalize_json_data(data: Any) -> Any:
+    """标准化 JSON 数据，便于持久化"""
+    if data is None:
+        return None
+    if isinstance(data, (dict, list)):
+        return data
+    if isinstance(data, str):
+        try:
+            return json.loads(data)
+        except json.JSONDecodeError:
+            return {"content": data}
+    return {"data": str(data)}
+
+
+async def cleanup_excess_success_logs(max_records: int = 300) -> None:
+    """清理超出最大保留条数的成功请求日志"""
+    try:
+        # 查询按 id 倒序第 max_records 条的 id
+        query = (
+            select(SuccessLog.id)
+            .order_by(SuccessLog.id.desc())
+            .offset(max_records)
+            .limit(1)
+        )
+        cutoff_id = await database.fetch_val(query)
+        if cutoff_id is not None:
+            del_query = delete(SuccessLog).where(SuccessLog.id <= cutoff_id)
+            await database.execute(del_query)
+    except Exception as e:
+        logger.error(f"Failed to cleanup excess success logs: {e}")
+
+
+async def add_success_log_detail(
+    request_log_id: Optional[int],
+    request_time: datetime,
+    model_name: Optional[str],
+    api_key: Optional[str],
+    status_code: int,
+    latency_ms: Optional[int],
+    request_body: Optional[Any],
+    response_body: Optional[Any],
+) -> bool:
+    """添加成功请求详情并执行数量上限淘汰"""
+    try:
+        req_json = _normalize_json_data(request_body)
+        resp_json = _normalize_json_data(response_body)
+
+        success_query = insert(SuccessLog).values(
+            request_log_id=request_log_id,
+            request_time=request_time,
+            model_name=model_name,
+            api_key=api_key,
+            status_code=status_code,
+            latency_ms=latency_ms,
+            request_body=req_json,
+            response_body=resp_json,
+        )
+        await database.execute(success_query)
+
+        # 异步清理多余的成功请求日志
+        asyncio.create_task(
+            cleanup_excess_success_logs(settings.SUCCESS_LOG_MAX_RECORDS)
+        )
+        return True
+    except Exception as e:
+        logger.error(f"Failed to add success log detail: {e}")
+        return False
+
+
+async def find_success_log_by_info(
+    gemini_key: str,
+    timestamp: datetime,
+    status_code: Optional[int] = None,
+    window_seconds: int = 100,
+) -> Optional[Dict[str, Any]]:
+    """在时间窗口内根据 key、状态码查找最匹配的成功详情"""
+    try:
+        start_time = timestamp - timedelta(seconds=window_seconds)
+        end_time = timestamp + timedelta(seconds=window_seconds)
+
+        base_query = select(SuccessLog).where(
+            SuccessLog.api_key == gemini_key,
+            SuccessLog.request_time >= start_time,
+            SuccessLog.request_time <= end_time,
+        )
+
+        if status_code is not None:
+            query = base_query.where(SuccessLog.status_code == status_code).order_by(
+                SuccessLog.request_time.desc()
+            )
+            candidates = await database.fetch_all(query)
+            if not candidates:
+                candidates = await database.fetch_all(
+                    base_query.order_by(SuccessLog.request_time.desc())
+                )
+        else:
+            candidates = await database.fetch_all(
+                base_query.order_by(SuccessLog.request_time.desc())
+            )
+
+        if not candidates:
+            return None
+
+        best_match = None
+        min_diff = None
+        target_ts = timestamp.timestamp() if hasattr(timestamp, "timestamp") else 0
+        for row in candidates:
+            row_dict = dict(row)
+            row_ts = (
+                row_dict["request_time"].timestamp()
+                if hasattr(row_dict["request_time"], "timestamp")
+                else 0
+            )
+            diff = abs(row_ts - target_ts)
+            if min_diff is None or diff < min_diff:
+                min_diff = diff
+                best_match = row_dict
+
+        if best_match:
+            if isinstance(best_match.get("request_time"), datetime):
+                best_match["request_time"] = best_match["request_time"].isoformat()
+            if isinstance(best_match.get("request_body"), (dict, list)):
+                best_match["request_body"] = json.dumps(
+                    best_match["request_body"], ensure_ascii=False, indent=2
+                )
+            if isinstance(best_match.get("response_body"), (dict, list)):
+                best_match["response_body"] = json.dumps(
+                    best_match["response_body"], ensure_ascii=False, indent=2
+                )
+
+        return best_match
+    except Exception as e:
+        logger.error(f"Failed to find success log by info: {e}")
+        return None
+
+
 # 新增函数：添加请求日志
 async def add_request_log(
     model_name: Optional[str],
@@ -505,6 +649,8 @@ async def add_request_log(
     status_code: Optional[int] = None,
     latency_ms: Optional[int] = None,
     request_time: Optional[datetime] = None,
+    request_body: Optional[Any] = None,
+    response_body: Optional[Any] = None,
 ) -> bool:
     """
     添加 API 请求日志
@@ -516,6 +662,8 @@ async def add_request_log(
         status_code: API 响应状态码
         latency_ms: 请求耗时(毫秒)
         request_time: 请求发生时间 (如果为 None, 则使用当前时间)
+        request_body: 完整请求体
+        response_body: 完整响应体
 
     Returns:
         bool: 是否添加成功
@@ -531,7 +679,25 @@ async def add_request_log(
             status_code=status_code,
             latency_ms=latency_ms,
         )
-        await database.execute(query)
+        request_log_id = await database.execute(query)
+
+        # 若请求成功且开启详情保存，记录请求体和响应体
+        if (
+            is_success
+            and settings.RECORD_SUCCESS_LOG_DETAIL_ENABLED
+            and (request_body is not None or response_body is not None)
+        ):
+            await add_success_log_detail(
+                request_log_id=request_log_id,
+                request_time=log_time,
+                model_name=model_name,
+                api_key=api_key,
+                status_code=status_code or 200,
+                latency_ms=latency_ms,
+                request_body=request_body,
+                response_body=response_body,
+            )
+
         return True
     except Exception as e:
         logger.error(f"Failed to add request log: {str(e)}")

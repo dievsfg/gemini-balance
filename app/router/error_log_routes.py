@@ -123,6 +123,18 @@ class ErrorLogDetailResponse(BaseModel):
     error_code: Optional[int] = None
 
 
+class SuccessLogDetailResponse(BaseModel):
+    id: int
+    request_log_id: Optional[int] = None
+    api_key: Optional[str] = None
+    model_name: Optional[str] = None
+    status_code: Optional[int] = 200
+    latency_ms: Optional[int] = None
+    request_body: Optional[str] = None
+    response_body: Optional[str] = None
+    request_time: Optional[str] = None
+
+
 @router.get("/errors/{log_id}/details", response_model=ErrorLogDetailResponse)
 async def get_error_log_detail_api(request: Request, log_id: int = Path(..., ge=1)):
     """
@@ -185,6 +197,45 @@ async def lookup_error_log_by_info(
     except Exception as e:
         logger.exception(
             f"Failed to lookup error log by info for key=***{gemini_key[-4:] if gemini_key else ''}: {str(e)}"
+        )
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get("/success/lookup", response_model=SuccessLogDetailResponse)
+async def lookup_success_log_by_info(
+    request: Request,
+    gemini_key: str = Query(..., description="完整的 API key"),
+    timestamp: datetime = Query(..., description="请求时间 (ISO8601)"),
+    status_code: Optional[int] = Query(None, description="状态码 (可选)"),
+    window_seconds: int = Query(
+        100, ge=1, le=300, description="时间窗口(秒), 默认100秒"
+    ),
+):
+    """
+    通过 key / 状态码 / 时间窗口 查找最匹配的一条成功请求详情。
+    """
+    auth_token = request.cookies.get("auth_token")
+    if not auth_token or not verify_auth_token(auth_token):
+        logger.warning("Unauthorized access attempt to lookup success log by info")
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    try:
+        from app.database import services as db_services
+
+        detail = await db_services.find_success_log_by_info(
+            gemini_key=gemini_key,
+            timestamp=timestamp,
+            status_code=status_code,
+            window_seconds=window_seconds,
+        )
+        if not detail:
+            raise HTTPException(status_code=404, detail="No matching success log found")
+        return SuccessLogDetailResponse(**detail)
+    except HTTPException as http_exc:
+        raise http_exc
+    except Exception as e:
+        logger.exception(
+            f"Failed to lookup success log by info for key=***{gemini_key[-4:] if gemini_key else ''}: {str(e)}"
         )
         raise HTTPException(status_code=500, detail="Internal server error")
 

@@ -822,6 +822,13 @@ async function initConfig() {
     }
     // --- 结束：处理自动删除请求日志配置的默认值 ---
 
+    if (typeof config.RECORD_SUCCESS_LOG_DETAIL_ENABLED === "undefined") {
+      config.RECORD_SUCCESS_LOG_DETAIL_ENABLED = true;
+    }
+    if (typeof config.SUCCESS_LOG_MAX_RECORDS === "undefined") {
+      config.SUCCESS_LOG_MAX_RECORDS = 300;
+    }
+
     // --- 新增：处理重试间隔配置的默认值 ---
     if (typeof config.RETRY_INTERVALS === "undefined") {
       config.RETRY_INTERVALS = "";
@@ -890,6 +897,8 @@ async function initConfig() {
       AUTO_DELETE_ERROR_LOGS_DAYS: 7, // 新增默认值
       AUTO_DELETE_REQUEST_LOGS_ENABLED: false, // 新增默认值
       AUTO_DELETE_REQUEST_LOGS_DAYS: 30, // 新增默认值
+      RECORD_SUCCESS_LOG_DETAIL_ENABLED: true,
+      SUCCESS_LOG_MAX_RECORDS: 300,
       RETRY_INTERVALS: "",
       // --- 新增：处理假流式配置的默认值 ---
       FAKE_STREAM_ENABLED: false,

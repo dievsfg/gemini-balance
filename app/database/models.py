@@ -63,6 +63,27 @@ class RequestLog(Base):
         return f"<RequestLog(id='{self.id}', key='{self.api_key[:4]}...', success='{self.is_success}')>"
 
 
+class SuccessLog(Base):
+    """
+    成功请求详情表 (最多保留最近 300 条)
+    """
+
+    __tablename__ = "t_success_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    request_log_id = Column(Integer, nullable=True, index=True, comment="对应 t_request_log 的 ID")
+    request_time = Column(DateTime, default=datetime.datetime.now, index=True, comment="请求时间")
+    model_name = Column(String(100), nullable=True, comment="模型名称")
+    api_key = Column(String(100), nullable=True, index=True, comment="使用的API密钥")
+    status_code = Column(Integer, default=200, comment="响应状态码")
+    latency_ms = Column(Integer, nullable=True, comment="请求耗时(毫秒)")
+    request_body = Column(JSON, nullable=True, comment="完整请求体")
+    response_body = Column(JSON, nullable=True, comment="完整响应体")
+
+    def __repr__(self):
+        return f"<SuccessLog(id='{self.id}', model='{self.model_name}', key='{self.api_key[:4] if self.api_key else ''}...')>"
+
+
 class FileState(enum.Enum):
     """文件状态枚举"""
     PROCESSING = "PROCESSING"

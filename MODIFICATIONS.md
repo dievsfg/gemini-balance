@@ -121,7 +121,7 @@
     - [文件 7]：在 `_extract_result` 中统一遍历全部 parts 分离提取思考过程（`thought: True`）与正式正文，并在 `_handle_gemini_stream_response` 中独立构建思考与正文 parts 列表。
 
 ## 📅 2026-09-10：新增请求失败重试间隔配置（支持序列与倍数退避）
-* **提交版本**：`<Current>`
+* **提交版本**：`fa5b6fc`
 * **影响文件**：
   1. `app/config/config.py`
   2. `app/utils/helpers.py`
@@ -145,3 +145,35 @@
     - [文件 7]：在 `GeminiChatService.stream_generate_content` 循环中增加重试等待逻辑。
     - [文件 8]：在 `VertexExpressChatService.stream_generate_content` 循环中增加重试等待逻辑。
     - [文件 9]：在 `OpenAICompatiableService._handle_stream_completion` 循环中增加重试等待逻辑。
+
+## 📅 2026-09-10：新增成功 API 请求完整请求体与响应体保存与详情查看功能
+* **提交版本**：`<Current>`
+* **影响文件**：
+  1. `app/config/config.py`
+  2. `app/database/models.py`
+  3. `app/database/services.py`
+  4. `app/service/stats/stats_service.py`
+  5. `app/router/error_log_routes.py`
+  6. `app/service/chat/openai_chat_service.py`
+  7. `app/service/chat/gemini_chat_service.py`
+  8. `app/service/chat/vertex_express_chat_service.py`
+  9. `app/service/openai_compatiable/openai_compatiable_service.py`
+  10. `app/templates/config_editor.html`
+  11. `app/static/js/config_editor.js`
+  12. `app/static/js/keys_status.js`
+* **改动说明**：
+  * **[成功详情存储与模型支持]**：新增 `SuccessLog` 模型并在配置中增加保存开关与条数上限。
+    - [文件 1]：在 `Settings` 配置类中新增 `RECORD_SUCCESS_LOG_DETAIL_ENABLED` 与 `SUCCESS_LOG_MAX_RECORDS`。
+    - [文件 2]：新增 `SuccessLog` 表模型（`t_success_logs`），包含关联日志 ID、时间、Key、模型、请求体与响应体等字段。
+    - [文件 3]：实现 `add_success_log_detail`、`cleanup_excess_success_logs` 淘汰清理机制（最多保留 300 条）及 `find_success_log_by_info`。
+  * **[服务层请求与响应数据捕获]**：在非流式与流式服务中捕获并持久化完整的请求体与响应体。
+    - [文件 4]：在 `StatsService` 的调用详情查询中比对返回 `has_detail` 标记，用于前端识别有效详情。
+    - [文件 5]：在日志路由中暴露 `/api/logs/success/lookup` 端点，供前端按条件检索成功详情。
+    - [文件 6]：在 `OpenAIChatService` 普通与流式聊天结束时分别组装并持久化完整请求体与响应体。
+    - [文件 7]：在 `GeminiChatService` 普通与流式聊天结束时分别捕获完整请求与响应内容。
+    - [文件 8]：在 `VertexExpressChatService` 普通与流式逻辑中同步记录完整请求与响应数据。
+    - [文件 9]：在 `OpenAICompatiableService` 中补全普通与流式调用的请求与响应保存。
+  * **[前端界面展示与交互]**：在控制台界面展示成功详情与配置项。
+    - [文件 10]：在配置编辑器界面新增成功请求保存详情开关与最大保留条数输入框。
+    - [文件 11]：在前端脚本中补充新增成功日志配置项的默认值初始化。
+    - [文件 12]：在 API 调用详情列表的成功记录行渲染绿色「详情」按钮，点击弹窗支持高亮格式化展示完整请求体/响应体并支持一键复制。

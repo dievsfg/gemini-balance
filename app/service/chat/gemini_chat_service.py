@@ -366,12 +366,15 @@ class GeminiChatService:
         is_success = False
         status_code = None
         response = None
+        saved_response = None
 
         try:
             response = await self.api_client.generate_content(payload, model, api_key)
             is_success = True
             status_code = 200
-            return self.response_handler.handle_response(response, model, stream=False)
+            res = self.response_handler.handle_response(response, model, stream=False)
+            saved_response = res
+            return res
         except Exception as e:
             is_success = False
             status_code = e.args[0] if len(e.args) > 0 and isinstance(e.args[0], int) else 500
@@ -398,6 +401,8 @@ class GeminiChatService:
                 status_code=status_code,
                 latency_ms=latency_ms,
                 request_time=request_datetime,
+                request_body=payload,
+                response_body=saved_response if is_success else None,
             )
 
     async def count_tokens(
@@ -682,12 +687,33 @@ class GeminiChatService:
                         model, payload, current_attempt_key
                     )
 
+                accumulated_parts = []
+                saved_response = None
                 async for chunk_data in stream_generator:
                     yield chunk_data
+                    if chunk_data.startswith("data:"):
+                        chunk_str = chunk_data[5:].strip()
+                        if chunk_str:
+                            try:
+                                c = json.loads(chunk_str)
+                                candidates = c.get("candidates", [])
+                                if candidates:
+                                    parts = candidates[0].get("content", {}).get("parts", [])
+                                    for p in parts:
+                                        if isinstance(p, dict):
+                                            accumulated_parts.append(p)
+                            except Exception:
+                                pass
 
                 logger.info("Streaming completed successfully")
                 is_success = True
                 status_code = 200
+                if accumulated_parts:
+                    saved_response = {
+                        "candidates": [
+                            {"content": {"parts": accumulated_parts, "role": "model"}}
+                        ]
+                    }
                 break
             except Exception as e:
                 retries += 1
@@ -738,4 +764,6 @@ class GeminiChatService:
                     status_code=status_code,
                     latency_ms=latency_ms,
                     request_time=request_datetime,
+                    request_body=payload,
+                    response_body=saved_response if is_success else None,
                 )

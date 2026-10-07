@@ -2026,6 +2026,90 @@ async function fetchAndShowErrorDetailByInfo(geminiKey, statusCode, timestampISO
   }
 }
 
+// 新增：根据 key / 状态码 / 时间窗口(±100秒) 查询并显示成功日志详情 (完整请求体与响应体)
+async function fetchAndShowSuccessDetailByInfo(geminiKey, statusCode, timestampISO) {
+  try {
+    if (!geminiKey || !timestampISO) {
+      showResultModal(false, '缺少必要参数，无法查询成功详情', false);
+      return;
+    }
+    const params = new URLSearchParams();
+    params.set('gemini_key', geminiKey);
+    params.set('timestamp', timestampISO);
+    if (statusCode !== null && statusCode !== undefined) {
+      params.set('status_code', String(statusCode));
+    }
+    params.set('window_seconds', '100');
+    const detail = await fetchAPI(`/api/logs/success/lookup?${params.toString()}`);
+    if (!detail) {
+      showResultModal(false, '未找到匹配的成功详情（仅保留最近 300 条）', false);
+      return;
+    }
+    const container = document.createElement('div');
+    container.className = 'space-y-4 text-sm text-left max-h-[70vh] overflow-y-auto pr-1';
+
+    // 基础信息卡片
+    const basic = document.createElement('div');
+    basic.className = 'bg-gray-50 dark:bg-gray-800 p-3 rounded-lg border border-gray-200 dark:border-gray-700 grid grid-cols-2 gap-2 text-xs';
+    basic.innerHTML = `
+      <div><span class="font-semibold text-gray-600 dark:text-gray-300">Key:</span> <span class="font-mono text-gray-800 dark:text-gray-200">${detail.api_key ? detail.api_key.substring(0,4)+'...'+detail.api_key.slice(-4) : 'N/A'}</span></div>
+      <div><span class="font-semibold text-gray-600 dark:text-gray-300">模型:</span> <span class="text-gray-800 dark:text-gray-200">${detail.model_name || 'N/A'}</span></div>
+      <div><span class="font-semibold text-gray-600 dark:text-gray-300">时间:</span> <span class="text-gray-800 dark:text-gray-200">${detail.request_time ? new Date(detail.request_time).toLocaleString() : 'N/A'}</span></div>
+      <div><span class="font-semibold text-gray-600 dark:text-gray-300">耗时:</span> <span class="text-gray-800 dark:text-gray-200">${detail.latency_ms != null ? detail.latency_ms + ' ms' : 'N/A'}</span></div>
+    `;
+    container.appendChild(basic);
+
+    // 辅助函数：创建带复制按钮的代码展示区
+    const createCodeSection = (title, content, bgColorClass) => {
+      const section = document.createElement('div');
+      section.className = 'space-y-1.5';
+
+      const header = document.createElement('div');
+      header.className = 'flex items-center justify-between';
+      header.innerHTML = `<span class="font-semibold text-gray-700 dark:text-gray-300">${title}</span>`;
+
+      const copyBtn = document.createElement('button');
+      copyBtn.className = 'px-2 py-0.5 text-xs rounded bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 transition-colors flex items-center gap-1';
+      copyBtn.innerHTML = '<i class="far fa-copy"></i> 复制';
+      copyBtn.onclick = () => {
+        navigator.clipboard.writeText(content).then(() => {
+          copyBtn.innerHTML = '<i class="fas fa-check text-green-500"></i> 已复制';
+          setTimeout(() => { copyBtn.innerHTML = '<i class="far fa-copy"></i> 复制'; }, 2000);
+        });
+      };
+      header.appendChild(copyBtn);
+      section.appendChild(header);
+
+      const pre = document.createElement('pre');
+      pre.className = `${bgColorClass} border rounded-lg p-3 text-xs max-h-60 overflow-y-auto whitespace-pre-wrap break-words font-mono`;
+      pre.textContent = content || '无内容';
+      section.appendChild(pre);
+
+      return section;
+    };
+
+    // 请求体
+    container.appendChild(createCodeSection(
+      '完整请求体 (Request Body)',
+      detail.request_body || '无请求体数据',
+      'bg-gray-50 border-gray-200 dark:bg-gray-900 dark:border-gray-700 text-gray-800 dark:text-gray-200'
+    ));
+
+    // 响应体
+    container.appendChild(createCodeSection(
+      '完整响应体 (Response Body)',
+      detail.response_body || '无响应体数据',
+      'bg-green-50/50 border-green-200 dark:bg-gray-900 dark:border-green-800 text-gray-800 dark:text-gray-200'
+    ));
+
+    showResultModal(true, container, false);
+    const titleElement = document.getElementById("resultModalTitle");
+    if (titleElement) titleElement.textContent = "API 请求成功详情";
+  } catch (e) {
+    showResultModal(false, `加载成功详情失败: ${e.message}`, false);
+  }
+}
+
 // 关闭 API 调用详情模态框
 function closeApiCallDetailsModal() {
   const modal = document.getElementById("apiCallDetailsModal");
@@ -2128,7 +2212,11 @@ const detailsBtn =
         ? `<button class="px-2 py-1 rounded bg-red-100 hover:bg-red-200 text-red-700 text-xs" onclick="fetchAndShowErrorDetailByInfo('${call.key}', ${call.status_code ?? 'null'}, '${call.timestamp}')">
              <i class="fas fa-info-circle mr-1"></i>详情
            </button>`
-        : "-";
+        : (call.has_detail
+          ? `<button class="px-2 py-1 rounded bg-green-100 hover:bg-green-200 text-green-700 text-xs" onclick="fetchAndShowSuccessDetailByInfo('${call.key}', ${call.status_code ?? '200'}, '${call.timestamp}')">
+               <i class="fas fa-info-circle mr-1"></i>详情
+             </button>`
+          : "-");
 
     tableHtml += `
             <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/30">
@@ -2228,7 +2316,11 @@ window.showKeyUsageDetails = async function (key) {
         ? `<button class="px-2 py-1 rounded bg-red-100 hover:bg-red-200 text-red-700 text-xs" onclick="fetchAndShowErrorDetailByInfo('${row.key}', ${row.status_code ?? 'null'}, '${row.timestamp}')">
              <i class="fas fa-info-circle mr-1"></i>详情
            </button>`
-        : '-';
+        : (row.has_detail
+          ? `<button class="px-2 py-1 rounded bg-green-100 hover:bg-green-200 text-green-700 text-xs" onclick="fetchAndShowSuccessDetailByInfo('${row.key}', ${row.status_code ?? '200'}, '${row.timestamp}')">
+               <i class="fas fa-info-circle mr-1"></i>详情
+             </button>`
+          : '-');
       tableHtml += `
         <tr>
           <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${timestamp}</td>

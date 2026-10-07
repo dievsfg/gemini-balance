@@ -146,6 +146,8 @@ class Settings(BaseSettings):
     AUTO_DELETE_ERROR_LOGS_DAYS: int = 7
     AUTO_DELETE_REQUEST_LOGS_ENABLED: bool = False
     AUTO_DELETE_REQUEST_LOGS_DAYS: int = 30
+    RECORD_SUCCESS_LOG_DETAIL_ENABLED: bool = True  # 是否保存请求成功的请求体和响应体详情
+    SUCCESS_LOG_MAX_RECORDS: int = 300  # 最多保留成功请求详情条数
     SAFETY_SETTINGS: List[Dict[str, str]] = DEFAULT_SAFETY_SETTINGS
 
     # Files API

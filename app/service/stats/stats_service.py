@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import and_, case, func, or_, select
 
 from app.database.connection import database
-from app.database.models import RequestLog
+from app.database.models import RequestLog, SuccessLog
 from app.log.logger import get_stats_logger
 
 logger = get_stats_logger()
@@ -222,8 +222,17 @@ class StatsService:
             raise ValueError(f"无效的时间段标识: {period}")
 
         try:
+            # 获取最近保留的成功日志 ID 集合
+            success_records = await database.fetch_all(
+                select(SuccessLog.request_log_id).where(SuccessLog.request_log_id.isnot(None))
+            )
+            success_ids_set = {
+                r["request_log_id"] for r in success_records if r["request_log_id"]
+            }
+
             query = (
                 select(
+                    RequestLog.id.label("id"),
                     RequestLog.request_time.label("timestamp"),
                     RequestLog.api_key.label("key"),
                     RequestLog.model_name.label("model"),
@@ -243,12 +252,14 @@ class StatsService:
                     status = "success" if 200 <= row["status_code"] < 300 else "failure"
 
                 record = {
+                    "id": row["id"],
                     "timestamp": row["timestamp"].isoformat(),
                     "key": row["key"],
                     "model": row["model"],
                     "status": status,
                     "status_code": row["status_code"],
                     "latency_ms": row["latency_ms"],
+                    "has_detail": (row["id"] in success_ids_set) if status == "success" else False,
                 }
 
                 details.append(record)
@@ -277,8 +288,16 @@ class StatsService:
             raise ValueError(f"无效的时间段标识: {period}")
 
         try:
+            success_records = await database.fetch_all(
+                select(SuccessLog.request_log_id).where(SuccessLog.request_log_id.isnot(None))
+            )
+            success_ids_set = {
+                r["request_log_id"] for r in success_records if r["request_log_id"]
+            }
+
             query = (
                 select(
+                    RequestLog.id.label("id"),
                     RequestLog.request_time.label("timestamp"),
                     RequestLog.api_key.label("key"),
                     RequestLog.model_name.label("model"),
@@ -298,12 +317,14 @@ class StatsService:
                     status = "success" if 200 <= row["status_code"] < 300 else "failure"
 
                 record = {
+                    "id": row["id"],
                     "timestamp": row["timestamp"].isoformat(),
                     "key": row["key"],
                     "model": row["model"],
                     "status": status,
                     "status_code": row["status_code"],
                     "latency_ms": row["latency_ms"],
+                    "has_detail": (row["id"] in success_ids_set) if status == "success" else False,
                 }
 
                 details.append(record)

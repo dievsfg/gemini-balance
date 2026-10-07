@@ -72,6 +72,7 @@ class OpenAICompatiableService:
         is_success = False
         status_code = None
         response = None
+        response = None
         try:
             response = await self.api_client.generate_content(request, api_key)
             is_success = True
@@ -102,6 +103,8 @@ class OpenAICompatiableService:
                 status_code=status_code,
                 latency_ms=latency_ms,
                 request_time=request_datetime,
+                request_body=request,
+                response_body=response if is_success else None,
             )
 
     async def _handle_stream_completion(
@@ -127,12 +130,13 @@ class OpenAICompatiableService:
             request_datetime = datetime.datetime.now()
             current_attempt_key = api_key
             final_api_key = current_attempt_key
+            accumulated_lines = []
             try:
                 async for line in self.api_client.stream_generate_content(
                     payload, current_attempt_key
                 ):
                     if line.startswith("data:"):
-                        # print(line)
+                        accumulated_lines.append(line)
                         yield line + "\n\n"
                 logger.info("Streaming completed successfully")
                 is_success = True
@@ -186,6 +190,16 @@ class OpenAICompatiableService:
             finally:
                 end_time = time.perf_counter()
                 latency_ms = int((end_time - start_time) * 1000)
+                await add_request_log(
+                    model_name=model,
+                    api_key=final_api_key,
+                    is_success=is_success,
+                    status_code=status_code,
+                    latency_ms=latency_ms,
+                    request_time=request_datetime,
+                    request_body=payload,
+                    response_body={"lines": accumulated_lines} if is_success else None,
+                )
                 await add_request_log(
                     model_name=model,
                     api_key=final_api_key,
