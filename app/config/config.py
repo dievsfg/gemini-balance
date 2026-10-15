@@ -130,6 +130,8 @@ class Settings(BaseSettings):
     FAKE_STREAM_WAIT_UPSTREAM_ENABLED: bool = False  # 假流式是否优先等待上游响应
     FAKE_STREAM_MAX_WAIT_SECONDS: int = 5  # 假流式优先等待上游的最大等待时间（秒）
     FAKE_STREAM_EMPTY_DATA_INTERVAL_SECONDS: int = 5  # 假流式发送空数据的间隔时间（秒）
+    FAKE_STREAM_UPSTREAM_STREAMING: bool = False  # 假流式是否向上游实际发起流式请求
+    FAKE_STREAM_STREAMING_TIMEOUT_SECONDS: int = 120  # 假流式向上游发起流式请求的超时时间（秒）
 
     # 调度器配置
     CHECK_INTERVAL_HOURS: int = 1  # 默认检查间隔为1小时

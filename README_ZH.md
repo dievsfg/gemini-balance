@@ -240,7 +240,13 @@ app/
 | `STREAM_CHUNK_SIZE` | 流式输出块大小 | `5` |
 | **伪流式 (Fake Stream) 相关** | | |
 | `FAKE_STREAM_ENABLED` | 是否启用伪流式传输 | `false` |
+| `GEMINI_FAKE_STREAM_ENABLED` | 是否对 Gemini 原生接口启用伪流式传输 | `false` |
+| `FAKE_STREAM_CHECK_FINISH_REASON` | 伪流式是否校验结束标识异常并报错 | `false` |
+| `FAKE_STREAM_WAIT_UPSTREAM_ENABLED` | 伪流式是否优先等待上游响应 | `false` |
+| `FAKE_STREAM_MAX_WAIT_SECONDS` | 伪流式优先等待上游的最大等待时间（秒） | `5` |
 | `FAKE_STREAM_EMPTY_DATA_INTERVAL_SECONDS` | 伪流式传输时发送心跳空数据的间隔秒数 | `5` |
+| `FAKE_STREAM_UPSTREAM_STREAMING` | 伪流式是否向上游实际发起流式请求 | `false` |
+| `FAKE_STREAM_STREAMING_TIMEOUT_SECONDS` | 伪流式向上游发起流式请求的超时时间（秒） | `120` |
 
 </details>
 

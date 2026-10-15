@@ -147,7 +147,7 @@
     - [文件 9]：在 `OpenAICompatiableService._handle_stream_completion` 循环中增加重试等待逻辑。
 
 ## 📅 2026-09-10：新增成功 API 请求完整请求体与响应体保存与详情查看功能
-* **提交版本**：`<Current>`
+* **提交版本**：`69bc161`
 * **影响文件**：
   1. `app/config/config.py`
   2. `app/database/models.py`
@@ -177,3 +177,32 @@
     - [文件 10]：在配置编辑器界面新增成功请求保存详情开关与最大保留条数输入框。
     - [文件 11]：在前端脚本中补充新增成功日志配置项的默认值初始化。
     - [文件 12]：在 API 调用详情列表的成功记录行渲染绿色「详情」按钮，点击弹窗支持高亮格式化展示完整请求体/响应体并支持一键复制。
+
+## 📅 2026-10-15：假流式向上游实际发起流式请求与超时机制支持
+* **提交版本**：`<Current>`
+* **影响文件**：
+  1. `app/config/config.py`
+  2. `.env.example`
+  3. `README_ZH.md`
+  4. `README.md`
+  5. `app/service/client/api_client.py`
+  6. `app/service/chat/openai_chat_service.py`
+  7. `app/service/chat/gemini_chat_service.py`
+  8. `app/service/chat/vertex_express_chat_service.py`
+  9. `app/templates/config_editor.html`
+  10. `app/static/js/config_editor.js`
+* **改动说明**：
+  * **[假流式配置扩展]**：新增假流式向上游实际发起流式请求与流式响应超时配置项。
+    - [文件 1]：在 `Settings` 中新增 `FAKE_STREAM_UPSTREAM_STREAMING` 与 `FAKE_STREAM_STREAMING_TIMEOUT_SECONDS`（默认 120 秒）字段。
+    - [文件 2]：在 `.env.example` 中补充新增环境变量及注释说明。
+    - [文件 3]：在中文说明文档的伪流式参数表格中同步更新配置项定义。
+    - [文件 4]：在英文说明文档中同步更新配置项表格说明。
+  * **[上游流式聚合与超时熔断]**：在 APIClient 中支持将上游流式响应消费聚合为标准响应结构。
+    - [文件 5]：在 `GeminiApiClient` 中新增 `stream_generate_content_as_response` 方法，消费流式 SSE 行并聚合 candidates、parts、finishReason 与 usageMetadata，并通过 `asyncio.wait_for` 强制超时中断（超时抛出 504 异常）。
+  * **[服务层假流式流式请求与两阶段异常捕获]**：在各 ChatService 中支持按配置向上游发起流式请求并进行全生命周期异常管控。
+    - [文件 6]：在 `OpenAIChatService._fake_stream_logic_impl` 中支持切换上游流式调用，等待流式完全结束再校验 finishReason，同时捕获超时与上游报错，未发心跳前直返 HTTP 错误，已发心跳后下发 SSE 错误。
+    - [文件 7]：在 `GeminiChatService._fake_stream_logic_impl` 中同步支持上游流式聚合、超时控制与两阶段异常处理。
+    - [文件 8]：在 `VertexExpressChatService._fake_stream_logic_impl` 中同步实现相同的上游流式调用与两阶段异常拦截。
+  * **[前端配置编辑器交互]**：在配置管理页面中增加新增假流式选项的表单输入与双向绑定。
+    - [文件 9]：在假流式卡片中新增「假流式向上游发起流式请求」开关与「假流式流式响应超时时间」数字输入项。
+    - [文件 10]：在前端脚本中补全新增选项的默认值设置、表单回显与数据收集。

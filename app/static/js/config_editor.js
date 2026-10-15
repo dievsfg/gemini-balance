@@ -854,6 +854,12 @@ async function initConfig() {
     if (typeof config.FAKE_STREAM_EMPTY_DATA_INTERVAL_SECONDS === "undefined") {
       config.FAKE_STREAM_EMPTY_DATA_INTERVAL_SECONDS = 5;
     }
+    if (typeof config.FAKE_STREAM_UPSTREAM_STREAMING === "undefined") {
+      config.FAKE_STREAM_UPSTREAM_STREAMING = false;
+    }
+    if (typeof config.FAKE_STREAM_STREAMING_TIMEOUT_SECONDS === "undefined") {
+      config.FAKE_STREAM_STREAMING_TIMEOUT_SECONDS = 120;
+    }
     // --- 结束：处理假流式配置的默认值 ---
 
     populateForm(config);
@@ -907,6 +913,8 @@ async function initConfig() {
       FAKE_STREAM_WAIT_UPSTREAM_ENABLED: false,
       FAKE_STREAM_MAX_WAIT_SECONDS: 5,
       FAKE_STREAM_EMPTY_DATA_INTERVAL_SECONDS: 5,
+      FAKE_STREAM_UPSTREAM_STREAMING: false,
+      FAKE_STREAM_STREAMING_TIMEOUT_SECONDS: 120,
       // --- 结束：处理假流式配置的默认值 ---
     };
 
@@ -1161,6 +1169,12 @@ function populateForm(config) {
   const fakeStreamIntervalInput = document.getElementById(
     "FAKE_STREAM_EMPTY_DATA_INTERVAL_SECONDS"
   );
+  const fakeStreamUpstreamStreamingCheckbox = document.getElementById(
+    "FAKE_STREAM_UPSTREAM_STREAMING"
+  );
+  const fakeStreamStreamingTimeoutInput = document.getElementById(
+    "FAKE_STREAM_STREAMING_TIMEOUT_SECONDS"
+  );
 
   if (fakeStreamEnabledCheckbox) {
     fakeStreamEnabledCheckbox.checked = !!config.FAKE_STREAM_ENABLED;
@@ -1183,6 +1197,14 @@ function populateForm(config) {
   if (fakeStreamIntervalInput) {
     fakeStreamIntervalInput.value =
       config.FAKE_STREAM_EMPTY_DATA_INTERVAL_SECONDS || 5;
+  }
+  if (fakeStreamUpstreamStreamingCheckbox) {
+    fakeStreamUpstreamStreamingCheckbox.checked =
+      !!config.FAKE_STREAM_UPSTREAM_STREAMING;
+  }
+  if (fakeStreamStreamingTimeoutInput) {
+    fakeStreamStreamingTimeoutInput.value =
+      config.FAKE_STREAM_STREAMING_TIMEOUT_SECONDS || 120;
   }
   // --- 结束：处理假流式配置的字段 ---
 }
@@ -2184,6 +2206,22 @@ function collectFormData() {
   if (fakeStreamIntervalInput) {
     formData["FAKE_STREAM_EMPTY_DATA_INTERVAL_SECONDS"] = parseInt(
       fakeStreamIntervalInput.value,
+      10
+    );
+  }
+  const fakeStreamUpstreamStreamingCheckbox = document.getElementById(
+    "FAKE_STREAM_UPSTREAM_STREAMING"
+  );
+  if (fakeStreamUpstreamStreamingCheckbox) {
+    formData["FAKE_STREAM_UPSTREAM_STREAMING"] =
+      fakeStreamUpstreamStreamingCheckbox.checked;
+  }
+  const fakeStreamStreamingTimeoutInput = document.getElementById(
+    "FAKE_STREAM_STREAMING_TIMEOUT_SECONDS"
+  );
+  if (fakeStreamStreamingTimeoutInput) {
+    formData["FAKE_STREAM_STREAMING_TIMEOUT_SECONDS"] = parseInt(
+      fakeStreamStreamingTimeoutInput.value,
       10
     );
   }

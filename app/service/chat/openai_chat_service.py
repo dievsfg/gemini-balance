@@ -391,13 +391,25 @@ class OpenAIChatService:
         self, model: str, payload: Dict[str, Any], api_key: str
     ) -> AsyncGenerator[str, None]:
         """处理伪流式 (fake stream) 的核心逻辑"""
-        logger.info(
-            f"Fake streaming enabled for model: {model}. Calling non-streaming endpoint."
-        )
-
-        api_response_task = asyncio.create_task(
-            self.api_client.generate_content(payload, model, api_key)
-        )
+        if settings.FAKE_STREAM_UPSTREAM_STREAMING:
+            logger.info(
+                f"Fake streaming enabled for model: {model} with upstream streaming. Calling stream endpoint."
+            )
+            api_response_task = asyncio.create_task(
+                self.api_client.stream_generate_content_as_response(
+                    payload,
+                    model,
+                    api_key,
+                    timeout=settings.FAKE_STREAM_STREAMING_TIMEOUT_SECONDS,
+                )
+            )
+        else:
+            logger.info(
+                f"Fake streaming enabled for model: {model}. Calling non-streaming endpoint."
+            )
+            api_response_task = asyncio.create_task(
+                self.api_client.generate_content(payload, model, api_key)
+            )
 
         has_yielded_heartbeat = False
         heartbeat_interval = max(1, settings.FAKE_STREAM_EMPTY_DATA_INTERVAL_SECONDS)
@@ -464,7 +476,14 @@ class OpenAIChatService:
                                 "Sent empty data chunk for fake stream heartbeat."
                             )
         finally:
+            pass
+
+        response = None
+        upstream_error = None
+        try:
             response = await api_response_task
+        except Exception as e:
+            upstream_error = e
 
         candidates = (
             response.get("candidates", []) if isinstance(response, dict) else []
@@ -474,8 +493,20 @@ class OpenAIChatService:
 
         is_abnormal = False
         error_msg = ""
+        error_code = 400
 
-        if not response or not candidates:
+        if upstream_error is not None:
+            is_abnormal = True
+            if len(upstream_error.args) >= 2 and isinstance(upstream_error.args[0], int):
+                error_code = upstream_error.args[0]
+                error_msg = str(upstream_error.args[1])
+            elif len(upstream_error.args) == 1 and isinstance(upstream_error.args[0], int):
+                error_code = upstream_error.args[0]
+                error_msg = str(upstream_error)
+            else:
+                error_code = 500
+                error_msg = str(upstream_error)
+        elif not response or not candidates:
             is_abnormal = True
             error_msg = "No candidates returned from model"
             if isinstance(response, dict) and response.get("error"):
@@ -502,8 +533,8 @@ class OpenAIChatService:
                 f"Fake stream abnormal response for model {model} (has_yielded_heartbeat={has_yielded_heartbeat}): {error_msg}"
             )
             if not has_yielded_heartbeat:
-                # 未向客户端发送任何数据包，直接抛出异常，由路由层返回 HTTP 400/500 JSON 错误
-                raise Exception(400, error_msg)
+                # 未向客户端发送任何数据包，直接抛出异常，由路由层返回 HTTP 400/500/504 JSON 错误
+                raise Exception(error_code, error_msg)
             else:
                 # 已发送过心跳包，通过 SSE 下发方案1的标准错误包
                 error_chunk = {
@@ -514,7 +545,7 @@ class OpenAIChatService:
                             if finish_reason and finish_reason != "STOP"
                             else "api_error"
                         ),
-                        "code": 400,
+                        "code": error_code,
                     }
                 }
                 yield f"data: {json.dumps(error_chunk)}\n\n"

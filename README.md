@@ -240,7 +240,13 @@ This endpoint is directly forwarded to official OpenAI Compatible API format end
 | `STREAM_CHUNK_SIZE` | Stream output chunk size | `5` |
 | **Fake Stream** | | |
 | `FAKE_STREAM_ENABLED` | Enable fake streaming | `false` |
+| `GEMINI_FAKE_STREAM_ENABLED` | Enable fake streaming for Gemini native endpoints | `false` |
+| `FAKE_STREAM_CHECK_FINISH_REASON` | Check abnormal finishReason in fake streaming | `false` |
+| `FAKE_STREAM_WAIT_UPSTREAM_ENABLED` | Prioritize waiting for upstream response in fake streaming | `false` |
+| `FAKE_STREAM_MAX_WAIT_SECONDS` | Maximum wait time for upstream response in fake streaming (seconds) | `5` |
 | `FAKE_STREAM_EMPTY_DATA_INTERVAL_SECONDS` | Heartbeat interval for fake streaming (seconds) | `5` |
+| `FAKE_STREAM_UPSTREAM_STREAMING` | Request upstream with streaming in fake streaming | `false` |
+| `FAKE_STREAM_STREAMING_TIMEOUT_SECONDS` | Timeout for upstream streaming in fake streaming (seconds) | `120` |
 
 </details>
 

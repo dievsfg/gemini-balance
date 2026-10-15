@@ -1,5 +1,8 @@
 # app/services/chat/api_client.py
 
+import asyncio
+import copy
+import json
 import random
 from abc import ABC, abstractmethod
 from typing import Any, AsyncGenerator, Dict, Optional
@@ -141,6 +144,96 @@ class GeminiApiClient(ApiClient):
                     raise Exception(response.status_code, error_msg)
                 async for line in response.aiter_lines():
                     yield line
+
+    async def stream_generate_content_as_response(
+        self,
+        payload: Dict[str, Any],
+        model: str,
+        api_key: str,
+        timeout: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """向上游发起流式请求，并在流式响应完全结束或超时后聚合为一个完整的 response 字典。"""
+        if timeout is None:
+            timeout = getattr(settings, "FAKE_STREAM_STREAMING_TIMEOUT_SECONDS", 120)
+        timeout = max(1, timeout)
+
+        async def _consume_stream() -> Dict[str, Any]:
+            aggregated_candidates: list[Dict[str, Any]] = []
+            final_usage_metadata: Optional[Dict[str, Any]] = None
+            final_prompt_feedback: Optional[Dict[str, Any]] = None
+            error_info: Optional[Any] = None
+
+            async for line in self.stream_generate_content(payload, model, api_key):
+                if not line or not line.startswith("data:"):
+                    continue
+                chunk_str = line[5:].strip()
+                if not chunk_str:
+                    continue
+                try:
+                    chunk = json.loads(chunk_str)
+                except Exception:
+                    continue
+
+                if "error" in chunk:
+                    error_info = chunk["error"]
+
+                if "promptFeedback" in chunk:
+                    final_prompt_feedback = chunk["promptFeedback"]
+
+                if "usageMetadata" in chunk:
+                    final_usage_metadata = chunk["usageMetadata"]
+
+                candidates = chunk.get("candidates", [])
+                for cand in candidates:
+                    index = cand.get("index", 0)
+                    while len(aggregated_candidates) <= index:
+                        aggregated_candidates.append(
+                            {
+                                "content": {"parts": [], "role": "model"},
+                                "finishReason": None,
+                                "index": len(aggregated_candidates),
+                            }
+                        )
+                    target_cand = aggregated_candidates[index]
+
+                    if cand.get("finishReason"):
+                        target_cand["finishReason"] = cand["finishReason"]
+
+                    cand_parts = cand.get("content", {}).get("parts", [])
+                    for p in cand_parts:
+                        if not isinstance(p, dict):
+                            continue
+                        if target_cand["content"]["parts"]:
+                            last_p = target_cand["content"]["parts"][-1]
+                            if (
+                                "text" in p
+                                and "text" in last_p
+                                and p.get("thought") == last_p.get("thought")
+                                and set(p.keys()).issubset({"text", "thought"})
+                                and set(last_p.keys()).issubset({"text", "thought"})
+                            ):
+                                last_p["text"] += p["text"]
+                            else:
+                                target_cand["content"]["parts"].append(copy.deepcopy(p))
+                        else:
+                            target_cand["content"]["parts"].append(copy.deepcopy(p))
+
+            res: Dict[str, Any] = {"candidates": aggregated_candidates}
+            if final_usage_metadata is not None:
+                res["usageMetadata"] = final_usage_metadata
+            if final_prompt_feedback is not None:
+                res["promptFeedback"] = final_prompt_feedback
+            if error_info is not None:
+                res["error"] = error_info
+            return res
+
+        try:
+            return await asyncio.wait_for(_consume_stream(), timeout=timeout)
+        except asyncio.TimeoutError:
+            logger.error(
+                f"Upstream streaming response timed out after {timeout} seconds for model {model}"
+            )
+            raise Exception(504, f"Upstream streaming response timed out after {timeout} seconds")
 
     async def count_tokens(
         self, payload: Dict[str, Any], model: str, api_key: str
