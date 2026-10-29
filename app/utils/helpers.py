@@ -279,3 +279,54 @@ def calculate_retry_delay(
                 current_delay = current_delay * last_multiplier
 
     return min(max(0.0, current_delay), max_delay)
+
+
+def parse_upstream_error(
+    raw_error: Any, default_status_code: int = 500
+) -> Tuple[int, str, Optional[Dict[str, Any]]]:
+    """
+    解析上游返回的原始错误信息（可能是 JSON 字符串、字典或普通异常文本）。
+
+    Returns:
+        tuple: (status_code, clean_message, error_dict)
+        - status_code: HTTP 状态码
+        - clean_message: 纯文本错误描述
+        - error_dict: 若上游返回了规范的 error 字典对象则返回该字典，否则为 None
+    """
+    status_code = default_status_code
+    clean_message = ""
+    error_dict = None
+
+    if isinstance(raw_error, dict):
+        parsed = raw_error
+    elif isinstance(raw_error, str):
+        trimmed = raw_error.strip()
+        if trimmed.startswith("{") and trimmed.endswith("}"):
+            try:
+                parsed = json.loads(trimmed)
+            except Exception:
+                parsed = None
+        else:
+            parsed = None
+    else:
+        parsed = None
+
+    if isinstance(parsed, dict):
+        if "error" in parsed and isinstance(parsed["error"], dict):
+            error_dict = parsed["error"]
+        elif "code" in parsed or "message" in parsed or "status" in parsed:
+            error_dict = parsed
+
+    if error_dict is not None:
+        if "code" in error_dict and isinstance(error_dict["code"], int):
+            status_code = error_dict["code"]
+        clean_message = str(error_dict.get("message", ""))
+        if not clean_message and "status" in error_dict:
+            clean_message = str(error_dict["status"])
+    else:
+        clean_message = str(raw_error)
+
+    if not clean_message:
+        clean_message = "Unknown upstream error"
+
+    return status_code, clean_message, error_dict

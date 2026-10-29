@@ -176,6 +176,17 @@ class GeminiApiClient(ApiClient):
 
                 if "error" in chunk:
                     error_info = chunk["error"]
+                    err_code = 500
+                    err_msg = "Unknown upstream streaming error"
+                    if isinstance(error_info, dict):
+                        err_code = error_info.get("code", 500)
+                        err_msg = error_info.get("message", err_msg)
+                    elif isinstance(error_info, str):
+                        err_msg = error_info
+                    logger.error(
+                        f"Received error chunk in upstream stream for model {model}: {err_code} - {err_msg}"
+                    )
+                    raise Exception(err_code, err_msg)
 
                 if "promptFeedback" in chunk:
                     final_prompt_feedback = chunk["promptFeedback"]

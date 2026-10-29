@@ -21,7 +21,7 @@ from app.log.logger import get_openai_logger
 from app.service.client.api_client import GeminiApiClient
 from app.service.image.image_create_service import ImageCreateService
 from app.service.key.key_manager import KeyManager
-from app.utils.helpers import calculate_retry_delay
+from app.utils.helpers import calculate_retry_delay, parse_upstream_error
 
 logger = get_openai_logger()
 
@@ -497,59 +497,48 @@ class OpenAIChatService:
 
         if upstream_error is not None:
             is_abnormal = True
-            if len(upstream_error.args) >= 2 and isinstance(upstream_error.args[0], int):
-                error_code = upstream_error.args[0]
-                error_msg = str(upstream_error.args[1])
-            elif len(upstream_error.args) == 1 and isinstance(upstream_error.args[0], int):
-                error_code = upstream_error.args[0]
-                error_msg = str(upstream_error)
-            else:
-                error_code = 500
-                error_msg = str(upstream_error)
+            raw_err = (
+                upstream_error.args[1]
+                if len(upstream_error.args) >= 2
+                else (
+                    upstream_error.args[0]
+                    if len(upstream_error.args) == 1 and not isinstance(upstream_error.args[0], int)
+                    else str(upstream_error)
+                )
+            )
+            code_hint = (
+                upstream_error.args[0]
+                if len(upstream_error.args) >= 1 and isinstance(upstream_error.args[0], int)
+                else 500
+            )
+            error_code, error_msg, _ = parse_upstream_error(raw_err, default_status_code=code_hint)
+        elif isinstance(response, dict) and response.get("error"):
+            is_abnormal = True
+            error_code, error_msg, _ = parse_upstream_error(response.get("error"), default_status_code=500)
         elif not response or not candidates:
             is_abnormal = True
             error_msg = "No candidates returned from model"
-            if isinstance(response, dict) and response.get("error"):
-                err_info = response.get("error")
-                error_msg = (
-                    err_info.get("message", error_msg)
-                    if isinstance(err_info, dict)
-                    else str(err_info)
-                )
-            elif isinstance(response, dict) and response.get("promptFeedback"):
+            if isinstance(response, dict) and response.get("promptFeedback"):
                 error_msg = f"Prompt blocked: {response.get('promptFeedback')}"
-        elif (
-            settings.FAKE_STREAM_CHECK_FINISH_REASON
-            and finish_reason
-            and finish_reason != "STOP"
-        ):
+        elif isinstance(response, dict) and response.get("promptFeedback"):
             is_abnormal = True
-            error_msg = (
-                f"Stream generation finished with abnormal finishReason: {finish_reason}"
-            )
+            error_msg = f"Prompt blocked: {response.get('promptFeedback')}"
+        elif settings.FAKE_STREAM_CHECK_FINISH_REASON:
+            if not finish_reason:
+                is_abnormal = True
+                error_msg = "Stream generation finished abnormally without finishReason (incomplete response)"
+            elif finish_reason != "STOP":
+                is_abnormal = True
+                error_msg = (
+                    f"Stream generation finished with abnormal finishReason: {finish_reason}"
+                )
 
         if is_abnormal:
             logger.error(
                 f"Fake stream abnormal response for model {model} (has_yielded_heartbeat={has_yielded_heartbeat}): {error_msg}"
             )
-            if not has_yielded_heartbeat:
-                # 未向客户端发送任何数据包，直接抛出异常，由路由层返回 HTTP 400/500/504 JSON 错误
-                raise Exception(error_code, error_msg)
-            else:
-                # 已发送过心跳包，通过 SSE 下发方案1的标准错误包
-                error_chunk = {
-                    "error": {
-                        "message": error_msg,
-                        "type": (
-                            "abnormal_finish_reason"
-                            if finish_reason and finish_reason != "STOP"
-                            else "api_error"
-                        ),
-                        "code": error_code,
-                    }
-                }
-                yield f"data: {json.dumps(error_chunk)}\n\n"
-                return
+            # 抛出异常由外层重试循环接管，支持换 key 重试
+            raise Exception(error_code, error_msg)
 
         openai_response = self.response_handler.handle_response(
             response,
@@ -638,6 +627,7 @@ class OpenAIChatService:
         is_success = False
         status_code = None
         final_api_key = api_key
+        has_yielded_data = False
 
         while retries < max_retries:
             if retries > 0:
@@ -673,6 +663,7 @@ class OpenAIChatService:
                 accumulated_reasoning = []
                 saved_response = None
                 async for chunk_data in stream_generator:
+                    has_yielded_data = True
                     yield chunk_data
                     if chunk_data.startswith("data:"):
                         chunk_str = chunk_data[5:].strip()
@@ -703,8 +694,15 @@ class OpenAIChatService:
             except Exception as e:
                 retries += 1
                 is_success = False
-                status_code = e.args[0] if len(e.args) > 0 and isinstance(e.args[0], int) else 500
-                error_log_msg = e.args[1] if len(e.args) > 1 else str(e)
+                code_hint = (
+                    e.args[0]
+                    if len(e.args) > 0 and isinstance(e.args[0], int)
+                    else 500
+                )
+                raw_err = e.args[1] if len(e.args) > 1 else str(e)
+                status_code, error_log_msg, _ = parse_upstream_error(
+                    raw_err, default_status_code=code_hint
+                )
                 logger.warning(
                     f"Streaming API call failed with error: {error_log_msg}. Attempt {retries} of {max_retries} with key {current_attempt_key}"
                 )
@@ -738,18 +736,51 @@ class OpenAIChatService:
                         logger.error(
                             f"No valid API key available after {retries} retries, ceasing attempts for this request."
                         )
-                        raise
+                        if has_yielded_data:
+                            error_chunk = {
+                                "error": {
+                                    "message": error_log_msg,
+                                    "type": "api_error",
+                                    "code": status_code,
+                                }
+                            }
+                            yield f"data: {json.dumps(error_chunk)}\n\n"
+                            return
+                        else:
+                            raise
                 else:
                     logger.error(
                         "KeyManager not available, cannot switch API key. Ceasing attempts for this request."
                     )
-                    break
+                    if has_yielded_data:
+                        error_chunk = {
+                            "error": {
+                                "message": error_log_msg,
+                                "type": "api_error",
+                                "code": status_code,
+                            }
+                        }
+                        yield f"data: {json.dumps(error_chunk)}\n\n"
+                        return
+                    else:
+                        break
 
                 if retries >= max_retries:
                     logger.error(
                         f"Max retries ({max_retries}) reached for streaming model {model}."
                     )
-                    raise
+                    if has_yielded_data:
+                        error_chunk = {
+                            "error": {
+                                "message": error_log_msg,
+                                "type": "api_error",
+                                "code": status_code,
+                            }
+                        }
+                        yield f"data: {json.dumps(error_chunk)}\n\n"
+                        return
+                    else:
+                        raise
             finally:
                 end_time = time.perf_counter()
                 latency_ms = int((end_time - start_time) * 1000)

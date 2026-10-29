@@ -179,7 +179,7 @@
     - [文件 12]：在 API 调用详情列表的成功记录行渲染绿色「详情」按钮，点击弹窗支持高亮格式化展示完整请求体/响应体并支持一键复制。
 
 ## 📅 2026-10-15：假流式向上游实际发起流式请求与超时机制支持
-* **提交版本**：`<Current>`
+* **提交版本**：`6f99220`
 * **影响文件**：
   1. `app/config/config.py`
   2. `.env.example`
@@ -206,3 +206,28 @@
   * **[前端配置编辑器交互]**：在配置管理页面中增加新增假流式选项的表单输入与双向绑定。
     - [文件 9]：在假流式卡片中新增「假流式向上游发起流式请求」开关与「假流式流式响应超时时间」数字输入项。
     - [文件 10]：在前端脚本中补全新增选项的默认值设置、表单回显与数据收集。
+
+## 📅 2026-10-15：假流式上游错误即时熔断、多轮重试机制深度修复与原生错误报文透传
+* **提交版本**：`<Current>`
+* **影响文件**：
+  1. `app/utils/helpers.py`
+  2. `app/service/client/api_client.py`
+  3. `app/service/chat/gemini_chat_service.py`
+  4. `app/service/chat/vertex_express_chat_service.py`
+  5. `app/service/chat/openai_chat_service.py`
+* **改动说明**：
+  * **[上游流式错误即时熔断]**：修复流式数据中途包含 error 数据块被吞并误判成功的漏洞。
+    - [文件 2]：在 `GeminiApiClient.stream_generate_content_as_response` 中一旦检测到包含 `error` 字段的 SSE chunk，立即提取错误码并抛出异常中断流拉取。
+  * **[假流式异常判定重构]**：彻底重构各服务的假流式异常拦截规则。
+    - [文件 3]：在 `GeminiChatService._fake_stream_logic_impl` 中调整异常识别顺序，将 error 校验前置，抛出异常触发重试。
+    - [文件 4]：在 `VertexExpressChatService._fake_stream_logic_impl` 中同步重构异常判定与重试抛出。
+    - [文件 5]：在 `OpenAIChatService._fake_stream_logic_impl` 中将 `error` 校验优先级前置，并在开启结束原因检查时判定中途断流无 finishReason 的响应为异常并抛出。
+  * **[假流式重试机制贯通]**：实现心跳维持下的无感换 Key 重试与重试耗尽兜底。
+    - [文件 3]：在 `GeminiChatService.stream_generate_content` 中跟踪 `has_yielded_data`，在上游报错时正常换 Key 并在心跳维持下无感重试，仅在重试耗尽且已发心跳时下发标准 SSE Error 数据块。
+    - [文件 4]：在 `VertexExpressChatService.stream_generate_content` 中同步支持心跳阶段的多轮换 Key 重试与兜底下发。
+    - [文件 5]：在 `OpenAIChatService._handle_stream_completion` 中同步实现心跳维持下的多轮换 Key 重试机制与重试耗尽兜底。
+  * **[上游错误智能解析与原生透传]**：消除 JSON-in-JSON 二次转义并全量透传原生错误报文。
+    - [文件 1]：在 `helpers.py` 中新增 `parse_upstream_error`，自动解析上游原始 JSON 报文，提取纯净文本 `clean_message` 与结构化 `error_dict`。
+    - [文件 3]：在 `GeminiChatService` 错误下发与异常判定中直接透传 `{"error": error_dict}`，保留原生 status 与错误语义。
+    - [文件 4]：在 `VertexExpressChatService` 中同步实现 `error_dict` 原生透传与纯净日志记录。
+    - [文件 5]：在 `OpenAIChatService` 中提纯 `clean_message` 填充进 OpenAI 标准错误格式的 `message` 字段。
