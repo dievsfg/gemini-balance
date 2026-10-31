@@ -1217,6 +1217,151 @@ endblock %} {% block head_extra_styles %}
           />
         </div>
 
+        <!-- 错误规则未匹配兜底策略 -->
+        <div class="mb-6 p-4 rounded-xl border border-gray-200 bg-gray-50/50">
+          <label
+            for="ERROR_RULES_FALLBACK_STRATEGY"
+            class="block font-semibold mb-2 text-gray-700"
+            >未匹配错误兜底策略
+            <i class="fas fa-question-circle text-gray-400 ml-1 cursor-help" title="当API错误未命中白名单、模型级或全局级任何一条规则时的处理策略。优先级：白名单 > 模型级 > 全局型 > 兜底策略"></i>
+          </label>
+          <select
+            id="ERROR_RULES_FALLBACK_STRATEGY"
+            name="ERROR_RULES_FALLBACK_STRATEGY"
+            class="w-full px-4 py-3 rounded-lg form-select-themed"
+          >
+            <option value="global">全局错误类型（累加全局失败计数 - 推荐）</option>
+            <option value="model">模型级错误类型（仅累加该 Key 在当前模型下的失败计数）</option>
+            <option value="whitelist">白名单错误类型（直接忽略，不累加任何失败计数）</option>
+          </select>
+        </div>
+
+        <!-- 白名单错误类型规则 -->
+        <div class="mb-6 p-5 rounded-2xl border border-emerald-200 bg-emerald-50/30">
+          <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+            <div>
+              <span class="inline-flex items-center gap-1.5 font-bold text-emerald-800 text-base">
+                <i class="fas fa-shield-alt text-emerald-600"></i>
+                白名单错误类型
+              </span>
+              <span class="text-xs text-emerald-600 ml-2">(优先级最高：命中时直接忽略，不累加任何失败计数并继续重试)</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <button
+                type="button"
+                id="toggleJsonBtn_ERROR_RULES_WHITELIST"
+                class="px-2.5 py-1 text-xs rounded-lg font-medium border border-emerald-300 text-emerald-700 hover:bg-emerald-100 transition"
+                onclick="toggleRuleView('ERROR_RULES_WHITELIST')"
+              >
+                <i class="fas fa-code mr-1"></i>切换 JSON 编辑
+              </button>
+              <button
+                type="button"
+                class="px-3 py-1 text-xs rounded-lg font-medium bg-emerald-600 text-white hover:bg-emerald-700 transition flex items-center gap-1 shadow-sm"
+                onclick="addRuleRow('ERROR_RULES_WHITELIST')"
+              >
+                <i class="fas fa-plus"></i>添加规则
+              </button>
+            </div>
+          </div>
+          <!-- 可视化规则表格/行容器 -->
+          <div id="ruleTable_ERROR_RULES_WHITELIST" class="space-y-2.5"></div>
+          <!-- JSON 编辑容器 (默认隐藏) -->
+          <div id="ruleJsonContainer_ERROR_RULES_WHITELIST" class="hidden mt-2">
+            <textarea
+              id="ruleJson_ERROR_RULES_WHITELIST"
+              rows="6"
+              class="w-full px-4 py-3 rounded-lg font-mono text-xs form-input-themed leading-relaxed"
+              placeholder='[{"status_code": 500, "contains": ["Server disconnected"]}]'
+            ></textarea>
+            <div class="text-xs text-gray-500 mt-1">支持配置 status_code(状态码)、contains(包含字符)、not_contains(排除字符)、regex(正则表达式)。</div>
+          </div>
+        </div>
+
+        <!-- 模型级错误类型规则 -->
+        <div class="mb-6 p-5 rounded-2xl border border-amber-200 bg-amber-50/30">
+          <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+            <div>
+              <span class="inline-flex items-center gap-1.5 font-bold text-amber-800 text-base">
+                <i class="fas fa-layer-group text-amber-600"></i>
+                模型级错误类型
+              </span>
+              <span class="text-xs text-amber-600 ml-2">(优先级中等：命中时仅累加该 Key 在当前模型下的失败计数)</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <button
+                type="button"
+                id="toggleJsonBtn_ERROR_RULES_MODEL_LEVEL"
+                class="px-2.5 py-1 text-xs rounded-lg font-medium border border-amber-300 text-amber-700 hover:bg-amber-100 transition"
+                onclick="toggleRuleView('ERROR_RULES_MODEL_LEVEL')"
+              >
+                <i class="fas fa-code mr-1"></i>切换 JSON 编辑
+              </button>
+              <button
+                type="button"
+                class="px-3 py-1 text-xs rounded-lg font-medium bg-amber-600 text-white hover:bg-amber-700 transition flex items-center gap-1 shadow-sm"
+                onclick="addRuleRow('ERROR_RULES_MODEL_LEVEL')"
+              >
+                <i class="fas fa-plus"></i>添加规则
+              </button>
+            </div>
+          </div>
+          <!-- 可视化规则表格/行容器 -->
+          <div id="ruleTable_ERROR_RULES_MODEL_LEVEL" class="space-y-2.5"></div>
+          <!-- JSON 编辑容器 (默认隐藏) -->
+          <div id="ruleJsonContainer_ERROR_RULES_MODEL_LEVEL" class="hidden mt-2">
+            <textarea
+              id="ruleJson_ERROR_RULES_MODEL_LEVEL"
+              rows="6"
+              class="w-full px-4 py-3 rounded-lg font-mono text-xs form-input-themed leading-relaxed"
+              placeholder='[{"status_code": 429}, {"contains": ["quota exceeded"]}]'
+            ></textarea>
+            <div class="text-xs text-gray-500 mt-1">支持配置 status_code(状态码)、contains(包含字符)、not_contains(排除字符)、regex(正则表达式)。</div>
+          </div>
+        </div>
+
+        <!-- 全局错误类型规则 -->
+        <div class="mb-6 p-5 rounded-2xl border border-rose-200 bg-rose-50/30">
+          <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+            <div>
+              <span class="inline-flex items-center gap-1.5 font-bold text-rose-800 text-base">
+                <i class="fas fa-ban text-rose-600"></i>
+                全局错误类型
+              </span>
+              <span class="text-xs text-rose-600 ml-2">(优先级基础：命中时累加 Key 的全局失败计数，达上限全模型停用)</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <button
+                type="button"
+                id="toggleJsonBtn_ERROR_RULES_GLOBAL_LEVEL"
+                class="px-2.5 py-1 text-xs rounded-lg font-medium border border-rose-300 text-rose-700 hover:bg-rose-100 transition"
+                onclick="toggleRuleView('ERROR_RULES_GLOBAL_LEVEL')"
+              >
+                <i class="fas fa-code mr-1"></i>切换 JSON 编辑
+              </button>
+              <button
+                type="button"
+                class="px-3 py-1 text-xs rounded-lg font-medium bg-rose-600 text-white hover:bg-rose-700 transition flex items-center gap-1 shadow-sm"
+                onclick="addRuleRow('ERROR_RULES_GLOBAL_LEVEL')"
+              >
+                <i class="fas fa-plus"></i>添加规则
+              </button>
+            </div>
+          </div>
+          <!-- 可视化规则表格/行容器 -->
+          <div id="ruleTable_ERROR_RULES_GLOBAL_LEVEL" class="space-y-2.5"></div>
+          <!-- JSON 编辑容器 (默认隐藏) -->
+          <div id="ruleJsonContainer_ERROR_RULES_GLOBAL_LEVEL" class="hidden mt-2">
+            <textarea
+              id="ruleJson_ERROR_RULES_GLOBAL_LEVEL"
+              rows="6"
+              class="w-full px-4 py-3 rounded-lg font-mono text-xs form-input-themed leading-relaxed"
+              placeholder='[{"status_code": 401}, {"contains": ["API_KEY_INVALID"]}]'
+            ></textarea>
+            <div class="text-xs text-gray-500 mt-1">支持配置 status_code(状态码)、contains(包含字符)、not_contains(排除字符)、regex(正则表达式)。</div>
+          </div>
+        </div>
+
         <!-- 请求超时时间 -->
         <div class="mb-6">
           <label for="TIME_OUT" class="block font-semibold mb-2 text-gray-700"

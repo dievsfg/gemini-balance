@@ -208,7 +208,7 @@
     - [文件 10]：在前端脚本中补全新增选项的默认值设置、表单回显与数据收集。
 
 ## 📅 2026-10-15：假流式上游错误即时熔断、多轮重试机制深度修复与原生错误报文透传
-* **提交版本**：`<Current>`
+* **提交版本**：`a8c5b6b`
 * **影响文件**：
   1. `app/utils/helpers.py`
   2. `app/service/client/api_client.py`
@@ -231,3 +231,30 @@
     - [文件 3]：在 `GeminiChatService` 错误下发与异常判定中直接透传 `{"error": error_dict}`，保留原生 status 与错误语义。
     - [文件 4]：在 `VertexExpressChatService` 中同步实现 `error_dict` 原生透传与纯净日志记录。
     - [文件 5]：在 `OpenAIChatService` 中提纯 `clean_message` 填充进 OpenAI 标准错误格式的 `message` 字段。
+
+## 📅 2026-10-30：新增高自由度 API 错误分类规则系统与白名单忽略机制
+* **提交版本**：`<Current>`
+* **影响文件**：
+  1. `app/config/config.py`
+  2. `app/service/key/key_manager.py`
+  3. `app/templates/config_editor.html`
+  4. `app/static/js/config_editor.js`
+  5. `tests/test_error_rules.py`
+  6. `app/utils/helpers.py`
+  7. `app/log/logger.py`
+  8. `tests/test_key_redaction.py`
+* **改动说明**：
+  * **[多级错误规则与兜底策略定义]**：支持白名单、模型级与全局错误分流及未匹配兜底。
+    - [文件 1]：在 `Settings` 中新增 `ERROR_RULES_FALLBACK_STRATEGY`、`ERROR_RULES_WHITELIST`、`ERROR_RULES_MODEL_LEVEL`、`ERROR_RULES_GLOBAL_LEVEL` 4 个配置项及开箱预置规则。
+  * **[错误分类判定引擎与白名单计数豁免]**：重构错误判定机制，彻底解决服务端瞬态抖动误封 Key 问题。
+    - [文件 2]：在 `KeyManager` 中实现静态方法 `match_error_rule`，支持状态码、包含关键字、排除关键字及正则的多维度精准求值。
+    - [文件 2]：在 `KeyManager` 中新增 `classify_error` 方法，严格按照 白名单 > 模型级 > 全局型 > 兜底策略 的优先级进行裁决。
+    - [文件 2]：重构 `handle_api_failure` 和 `handle_vertex_api_failure`，若判定为白名单错误则仅记录信息日志并直接触发换 Key 重试，不增加任何全局或模型失败计数。
+  * **[配置编辑器 UI 交互升级]**：在 API 配置区域提供直观的可视化表单行与一键 JSON 视图。
+    - [文件 3]：在最大失败次数与请求超时时间之间插入未匹配兜底策略选择框及三大错误类型规则卡片，每张卡片均提供添加规则、删除与一键切换 JSON 模式。
+    - [文件 4]：在前端脚本中增加 `renderErrorRules`、`appendRuleRowElement`、`collectErrorRules` 与 `toggleRuleView`，支持双向无缝转换与保存持久化采集。
+  * **[自动化单元测试验证与脱敏健壮性修复]**：编写单元测试全面覆盖规则匹配与白名单机制，并修复历史脱敏测试遗留问题。
+    - [文件 5]：新增 `TestErrorRules` 单元测试，验证状态码匹配、含空格特殊字符匹配、排除词匹配、正则匹配、优先级链及白名单换 Key 计数字段豁免行为。
+    - [文件 6]：在 `helpers.py` 的 `redact_key_for_logging` 中增强非字符串类型与空值前置防御，修正短密钥脱敏占位。
+    - [文件 7]：在 `logger.py` 中同步强化 `redact_key_for_logging` 防御。
+    - [文件 8]：更新 `test_key_redaction.py` 中的模式数量断言以匹配 3 种密钥格式（`AIza`、`AQ.`、`sk-`）。

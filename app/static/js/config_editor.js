@@ -1027,8 +1027,26 @@ function populateForm(config) {
   }
 
   // 4. Populate other array fields (excluding THINKING_MODELS and API_KEYS)
+  const ERROR_RULE_KEYS = [
+    "ERROR_RULES_WHITELIST",
+    "ERROR_RULES_MODEL_LEVEL",
+    "ERROR_RULES_GLOBAL_LEVEL",
+  ];
+  ERROR_RULE_KEYS.forEach((ruleKey) => {
+    if (config[ruleKey] && Array.isArray(config[ruleKey])) {
+      renderErrorRules(ruleKey, config[ruleKey]);
+    } else {
+      renderErrorRules(ruleKey, []);
+    }
+  });
+
   for (const [key, value] of Object.entries(config)) {
-    if (Array.isArray(value) && key !== "THINKING_MODELS" && key !== "API_KEYS") {
+    if (
+      Array.isArray(value) &&
+      key !== "THINKING_MODELS" &&
+      key !== "API_KEYS" &&
+      !ERROR_RULE_KEYS.includes(key)
+    ) {
       const container = document.getElementById(`${key}_container`);
       if (container) {
         value.forEach((itemValue) => {
@@ -2120,6 +2138,16 @@ function collectFormData() {
     });
   }
 
+  // --- 收集错误分类规则配置 ---
+  const ERROR_RULE_KEYS_COLLECT = [
+    "ERROR_RULES_WHITELIST",
+    "ERROR_RULES_MODEL_LEVEL",
+    "ERROR_RULES_GLOBAL_LEVEL",
+  ];
+  ERROR_RULE_KEYS_COLLECT.forEach((ruleKey) => {
+    formData[ruleKey] = collectErrorRules(ruleKey);
+  });
+
   // --- 新增：收集自动删除错误日志的配置 ---
   const autoDeleteEnabledCheckbox = document.getElementById(
     "AUTO_DELETE_ERROR_LOGS_ENABLED"
@@ -2916,3 +2944,284 @@ function updateProxyStatusInList(results) {
 }
 
 // -- End Proxy Check Functions --
+
+// ==========================================
+// 错误分类规则 (Error Rules) 可视化与 JSON 视图管理
+// ==========================================
+
+/**
+ * 渲染指定规则集的可视化表格
+ * @param {string} ruleKey - 规则配置项键名
+ * @param {Array} rules - 规则列表
+ */
+function renderErrorRules(ruleKey, rules) {
+  const tableContainer = document.getElementById(`ruleTable_${ruleKey}`);
+  const jsonTextarea = document.getElementById(`ruleJson_${ruleKey}`);
+  if (!tableContainer) return;
+
+  tableContainer.innerHTML = "";
+  const validRules = Array.isArray(rules) ? rules : [];
+
+  if (validRules.length === 0) {
+    tableContainer.innerHTML = `
+      <div class="no-rule-hint text-xs text-gray-400 italic py-2 px-3 border border-dashed border-gray-300 rounded-lg text-center">
+        暂无规则，点击右上角「+ 添加规则」创建
+      </div>
+    `;
+  } else {
+    validRules.forEach((rule) => {
+      appendRuleRowElement(ruleKey, rule);
+    });
+  }
+
+  if (jsonTextarea) {
+    jsonTextarea.value = JSON.stringify(validRules, null, 2);
+  }
+}
+
+/**
+ * 创建单条规则的可视化行 DOM
+ */
+function appendRuleRowElement(ruleKey, rule = {}) {
+  const tableContainer = document.getElementById(`ruleTable_${ruleKey}`);
+  if (!tableContainer) return;
+
+  // 移除暂无提示
+  const hint = tableContainer.querySelector(".no-rule-hint");
+  if (hint) hint.remove();
+
+  const row = document.createElement("div");
+  row.className =
+    "rule-row bg-white/80 p-3 rounded-xl border border-gray-200/90 shadow-sm space-y-2.5 transition hover:border-blue-300";
+
+  // 解析各个字段
+  const statusCode =
+    rule.status_code !== undefined && rule.status_code !== null
+      ? rule.status_code
+      : "";
+
+  let containsStr = "";
+  if (rule.contains) {
+    containsStr = Array.isArray(rule.contains)
+      ? rule.contains.join(" | ")
+      : rule.contains;
+  }
+
+  let notContainsStr = "";
+  if (rule.not_contains) {
+    notContainsStr = Array.isArray(rule.not_contains)
+      ? rule.not_contains.join(" | ")
+      : rule.not_contains;
+  }
+
+  const regexStr = rule.regex || "";
+
+  row.innerHTML = `
+    <div class="grid grid-cols-1 md:grid-cols-12 gap-2 items-center">
+      <div class="md:col-span-2">
+        <label class="block text-[11px] font-medium text-gray-500 mb-0.5">HTTP状态码</label>
+        <input
+          type="text"
+          placeholder="如 500 (空为*)"
+          value="${escapeHtml(String(statusCode))}"
+          class="rule-status-code w-full px-2.5 py-1.5 rounded-lg text-xs font-mono form-input-themed"
+        />
+      </div>
+      <div class="md:col-span-4">
+        <label class="block text-[11px] font-medium text-gray-500 mb-0.5">必须包含字符 (含空格)</label>
+        <input
+          type="text"
+          placeholder="如 Server disconnected"
+          value="${escapeHtml(containsStr)}"
+          class="rule-contains w-full px-2.5 py-1.5 rounded-lg text-xs form-input-themed"
+          title="多个关键字可用 | 分隔，支持任意空格及特殊字符"
+        />
+      </div>
+      <div class="md:col-span-3">
+        <label class="block text-[11px] font-medium text-gray-500 mb-0.5">排除字符 (包含则不匹配)</label>
+        <input
+          type="text"
+          placeholder="如 quota exceeded"
+          value="${escapeHtml(notContainsStr)}"
+          class="rule-not-contains w-full px-2.5 py-1.5 rounded-lg text-xs form-input-themed"
+          title="多个排除关键字可用 | 分隔"
+        />
+      </div>
+      <div class="md:col-span-2">
+        <label class="block text-[11px] font-medium text-gray-500 mb-0.5">正则表达式 (可选)</label>
+        <input
+          type="text"
+          placeholder="如 ^[0-9]+$"
+          value="${escapeHtml(regexStr)}"
+          class="rule-regex w-full px-2.5 py-1.5 rounded-lg text-xs font-mono form-input-themed"
+        />
+      </div>
+      <div class="md:col-span-1 flex items-end justify-center pt-4 md:pt-0">
+        <button
+          type="button"
+          class="text-red-500 hover:text-red-700 p-1.5 rounded-lg hover:bg-red-50 transition"
+          title="删除该规则"
+          onclick="removeRuleRow(this, '${ruleKey}')"
+        >
+          <i class="fas fa-trash-alt text-sm"></i>
+        </button>
+      </div>
+    </div>
+  `;
+
+  tableContainer.appendChild(row);
+}
+
+/**
+ * 界面交互：添加新规则行
+ */
+function addRuleRow(ruleKey) {
+  appendRuleRowElement(ruleKey, {});
+}
+
+/**
+ * 界面交互：删除规则行
+ */
+function removeRuleRow(buttonElement, ruleKey) {
+  const row = buttonElement.closest(".rule-row");
+  if (row) {
+    row.remove();
+  }
+  const tableContainer = document.getElementById(`ruleTable_${ruleKey}`);
+  if (tableContainer && tableContainer.querySelectorAll(".rule-row").length === 0) {
+    tableContainer.innerHTML = `
+      <div class="no-rule-hint text-xs text-gray-400 italic py-2 px-3 border border-dashed border-gray-300 rounded-lg text-center">
+        暂无规则，点击右上角「+ 添加规则」创建
+      </div>
+    `;
+  }
+}
+
+/**
+ * 收集当前规则列表数据（统一支持从表格与JSON两种视图模式下安全抽取）
+ */
+function collectErrorRules(ruleKey) {
+  const jsonContainer = document.getElementById(`ruleJsonContainer_${ruleKey}`);
+  const isJsonView = jsonContainer && !jsonContainer.classList.contains("hidden");
+
+  // 如果处于 JSON 视图模式，优先从 JSON textarea 解析
+  if (isJsonView) {
+    const jsonTextarea = document.getElementById(`ruleJson_${ruleKey}`);
+    if (jsonTextarea && jsonTextarea.value.trim()) {
+      try {
+        const parsed = JSON.parse(jsonTextarea.value.trim());
+        if (Array.isArray(parsed)) {
+          return parsed;
+        }
+      } catch (err) {
+        console.warn(`JSON parse error for ${ruleKey}, falling back to table view`, err);
+      }
+    }
+  }
+
+  // 默认从可视化表单行收集
+  const tableContainer = document.getElementById(`ruleTable_${ruleKey}`);
+  if (!tableContainer) return [];
+
+  const rows = tableContainer.querySelectorAll(".rule-row");
+  const rules = [];
+
+  rows.forEach((row) => {
+    const statusInput = row.querySelector(".rule-status-code");
+    const containsInput = row.querySelector(".rule-contains");
+    const notContainsInput = row.querySelector(".rule-not-contains");
+    const regexInput = row.querySelector(".rule-regex");
+
+    const statusVal = statusInput ? statusInput.value.trim() : "";
+    const containsVal = containsInput ? containsInput.value : "";
+    const notContainsVal = notContainsInput ? notContainsInput.value : "";
+    const regexVal = regexInput ? regexInput.value.trim() : "";
+
+    const ruleObj = {};
+
+    if (statusVal !== "" && statusVal !== "*") {
+      const parsedCode = parseInt(statusVal, 10);
+      ruleObj.status_code = isNaN(parsedCode) ? statusVal : parsedCode;
+    }
+
+    if (containsVal.trim() !== "") {
+      const parts = containsVal.split("|").map((s) => s.trim()).filter(Boolean);
+      ruleObj.contains = parts.length > 1 ? parts : containsVal;
+    }
+
+    if (notContainsVal.trim() !== "") {
+      const parts = notContainsVal.split("|").map((s) => s.trim()).filter(Boolean);
+      ruleObj.not_contains = parts.length > 1 ? parts : notContainsVal;
+    }
+
+    if (regexVal !== "") {
+      ruleObj.regex = regexVal;
+    }
+
+    // 只要有任意一个字段被填写，即保留为有效规则
+    if (Object.keys(ruleObj).length > 0) {
+      rules.push(ruleObj);
+    }
+  });
+
+  return rules;
+}
+
+/**
+ * 界面交互：切换可视化表格与 JSON 文本模式
+ */
+function toggleRuleView(ruleKey) {
+  const tableContainer = document.getElementById(`ruleTable_${ruleKey}`);
+  const jsonContainer = document.getElementById(`ruleJsonContainer_${ruleKey}`);
+  const toggleBtn = document.getElementById(`toggleJsonBtn_${ruleKey}`);
+  const jsonTextarea = document.getElementById(`ruleJson_${ruleKey}`);
+
+  if (!tableContainer || !jsonContainer || !toggleBtn || !jsonTextarea) return;
+
+  const isCurrentlyTable = jsonContainer.classList.contains("hidden");
+
+  if (isCurrentlyTable) {
+    // 切换到 JSON 视图：将当前表格内容转换为 JSON
+    const currentRules = collectErrorRules(ruleKey);
+    jsonTextarea.value = JSON.stringify(currentRules, null, 2);
+    tableContainer.classList.add("hidden");
+    jsonContainer.classList.remove("hidden");
+    toggleBtn.innerHTML = '<i class="fas fa-table mr-1"></i>切回表单视图';
+  } else {
+    // 切回表单视图：解析 JSON 并重新渲染表格
+    const rawJson = jsonTextarea.value.trim();
+    if (rawJson) {
+      try {
+        const parsed = JSON.parse(rawJson);
+        if (Array.isArray(parsed)) {
+          renderErrorRules(ruleKey, parsed);
+        } else {
+          showNotification("JSON 格式必须为数组格式 [ {...} ]", "warning");
+          return;
+        }
+      } catch (e) {
+        showNotification("JSON 语法有误: " + e.message, "error");
+        return;
+      }
+    } else {
+      renderErrorRules(ruleKey, []);
+    }
+
+    jsonContainer.classList.add("hidden");
+    tableContainer.classList.remove("hidden");
+    toggleBtn.innerHTML = '<i class="fas fa-code mr-1"></i>切换 JSON 编辑';
+  }
+}
+
+/**
+ * HTML 转义函数
+ */
+function escapeHtml(string) {
+  if (string === null || string === undefined) return "";
+  return String(string)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}

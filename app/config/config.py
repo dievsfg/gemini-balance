@@ -56,6 +56,31 @@ class Settings(BaseSettings):
     BASE_URL: str = f"https://generativelanguage.googleapis.com/{API_VERSION}"
     AUTH_TOKEN: str = ""
     MAX_FAILURES: int = 3
+    # 错误分类规则配置
+    ERROR_RULES_FALLBACK_STRATEGY: str = "global"  # 未匹配规则时的兜底策略: global | model | whitelist
+    ERROR_RULES_WHITELIST: List[Dict[str, Any]] = [
+        {"status_code": 500, "contains": ["Server disconnected", "connection reset", "RemoteDisconnected"]},
+        {"contains": ["timeout", "timed out", "ClientDisconnect"]},
+    ]
+    ERROR_RULES_MODEL_LEVEL: List[Dict[str, Any]] = [
+        {"status_code": 429},
+        {"status_code": 503},
+        {
+            "contains": [
+                "resource_exhausted",
+                "quota exceeded",
+                "rate limit",
+                "too many requests",
+                "per-day",
+                "per-minute",
+            ]
+        },
+    ]
+    ERROR_RULES_GLOBAL_LEVEL: List[Dict[str, Any]] = [
+        {"status_code": 400, "contains": ["API_KEY_INVALID", "API key not valid"]},
+        {"status_code": 401},
+        {"status_code": 403},
+    ]
     TEST_MODEL: str = DEFAULT_MODEL
     TIME_OUT: int = DEFAULT_TIMEOUT
     MAX_RETRIES: int = MAX_RETRIES

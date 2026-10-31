@@ -162,7 +162,8 @@ class TestAccessLogFormatter(unittest.TestCase):
     def test_regex_patterns_compilation(self):
         """Test that regex patterns are properly compiled"""
         formatter = AccessLogFormatter()
-        self.assertEqual(len(formatter.compiled_patterns), 2)
+        self.assertEqual(len(formatter.compiled_patterns), len(AccessLogFormatter.API_KEY_PATTERNS))
+        self.assertEqual(len(formatter.compiled_patterns), 3)  # AIza, AQ., sk-
         self.assertTrue(
             all(hasattr(pattern, "sub") for pattern in formatter.compiled_patterns)
         )

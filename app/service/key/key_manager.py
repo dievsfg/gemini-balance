@@ -1,7 +1,9 @@
 import asyncio
+import json
 import random
+import re
 from itertools import cycle
-from typing import Dict, Union
+from typing import Any, Dict, List, Optional, Union
 
 from app.config.config import settings
 from app.exception.exceptions import NoValidKeyError
@@ -36,26 +38,109 @@ class KeyManager:
         self.MAX_FAILURES = settings.MAX_FAILURES
         self.paid_key = settings.PAID_KEY
 
+    @staticmethod
+    def match_error_rule(
+        rule: Dict[str, Any], status_code: Optional[int], error_msg: str
+    ) -> bool:
+        """
+        匹配单条错误分类规则。
+        支持字段:
+          - status_code: 状态码 (数字、数字字符串，留空/0/"*" 表示匹配全部)
+          - contains: 包含关键字 (字符串或列表，只要出现即可匹配，支持空格和特殊字符)
+          - not_contains: 排除关键字 (字符串或列表，若包含则不匹配)
+          - regex: 正则表达式 (可选)
+        """
+        # 1. 匹配 status_code
+        rule_code = rule.get("status_code")
+        if rule_code not in (None, "", "*", 0):
+            try:
+                if int(rule_code) != int(status_code or 0):
+                    return False
+            except (ValueError, TypeError):
+                return False
+
+        err_lower = (error_msg or "").lower()
+
+        # 2. 匹配 contains：列表中任意一个关键字匹配即满足
+        contains = rule.get("contains")
+        if contains:
+            if isinstance(contains, str):
+                contains_list = [contains]
+            elif isinstance(contains, list):
+                contains_list = contains
+            else:
+                contains_list = [str(contains)]
+
+            # 过滤非空关键字，只要包含其中任意一个即可
+            non_empty_kws = [str(kw).lower() for kw in contains_list if kw]
+            if non_empty_kws and not any(kw in err_lower for kw in non_empty_kws):
+                return False
+
+        # 3. 匹配 not_contains：列表中任意一个排除词出现即判定不匹配
+        not_contains = rule.get("not_contains")
+        if not_contains:
+            if isinstance(not_contains, str):
+                not_contains_list = [not_contains]
+            elif isinstance(not_contains, list):
+                not_contains_list = not_contains
+            else:
+                not_contains_list = [str(not_contains)]
+
+            for kw in not_contains_list:
+                if kw and str(kw).lower() in err_lower:
+                    return False
+
+        # 4. 匹配 regex
+        pattern = rule.get("regex")
+        if pattern:
+            try:
+                if not re.search(str(pattern), error_msg or "", re.IGNORECASE):
+                    return False
+            except re.error as e:
+                logger.warning(f"Invalid regex in error rule '{pattern}': {e}")
+                return False
+
+        return True
+
+    def classify_error(
+        self, status_code: Optional[int] = None, error_msg: str = ""
+    ) -> str:
+        """
+        根据规则优先级裁决错误分类：
+        1. 白名单 (whitelist) -> 忽略，不累加任何失败计数
+        2. 模型级 (model) -> 仅累加当前模型失败计数
+        3. 全局级 (global) -> 累加全局失败计数
+        4. 未匹配时按 ERROR_RULES_FALLBACK_STRATEGY 兜底 (默认 global)
+        """
+        # 优先级 1: 白名单错误
+        whitelist_rules = getattr(settings, "ERROR_RULES_WHITELIST", []) or []
+        for rule in whitelist_rules:
+            if isinstance(rule, dict) and self.match_error_rule(rule, status_code, error_msg):
+                return "whitelist"
+
+        # 优先级 2: 模型级错误
+        model_rules = getattr(settings, "ERROR_RULES_MODEL_LEVEL", []) or []
+        for rule in model_rules:
+            if isinstance(rule, dict) and self.match_error_rule(rule, status_code, error_msg):
+                return "model"
+
+        # 优先级 3: 全局错误
+        global_rules = getattr(settings, "ERROR_RULES_GLOBAL_LEVEL", []) or []
+        for rule in global_rules:
+            if isinstance(rule, dict) and self.match_error_rule(rule, status_code, error_msg):
+                return "global"
+
+        # 兜底策略
+        fallback = getattr(settings, "ERROR_RULES_FALLBACK_STRATEGY", "global")
+        if fallback in ("whitelist", "model", "global"):
+            return fallback
+        return "global"
+
     def _is_model_specific_error(
         self, status_code: int = None, error_msg: str = ""
     ) -> bool:
-        """判断是否为针对特定模型的 429 / 限流 / 配额耗尽错误"""
-        if status_code in (429, 503):
-            return True
-        if error_msg:
-            err_lower = error_msg.lower()
-            model_error_keywords = [
-                "429",
-                "resource_exhausted",
-                "quota exceeded",
-                "rate limit",
-                "too many requests",
-                "per-day",
-                "per-minute",
-            ]
-            if any(kw in err_lower for kw in model_error_keywords):
-                return True
-        return False
+        """保持向后兼容：判断是否被划归为模型级错误"""
+        return self.classify_error(status_code, error_msg) == "model"
 
     async def get_paid_key(self) -> str:
         return self.paid_key
@@ -231,15 +316,22 @@ class KeyManager:
         status_code: int = None,
         error_msg: str = "",
     ) -> str:
-        """处理API调用失败，按错误类型智能区分模型级 429 与全局 Key 失效"""
-        if self._is_model_specific_error(status_code, error_msg) and model_name:
+        """处理API调用失败，支持白名单豁免、模型级隔离与全局失效多级判定"""
+        error_type = self.classify_error(status_code, error_msg)
+
+        if error_type == "whitelist":
+            logger.info(
+                f"API key {redact_key_for_logging(api_key)} encountered transient error (Status: {status_code}, Msg: '{error_msg}'). "
+                f"Matched whitelist rules - failure count ignored."
+            )
+        elif error_type == "model" and model_name:
             async with self.model_failure_count_lock:
                 if model_name not in self.model_key_failure_counts:
                     self.model_key_failure_counts[model_name] = {}
                 count = self.model_key_failure_counts[model_name].get(api_key, 0) + 1
                 self.model_key_failure_counts[model_name][api_key] = count
                 logger.warning(
-                    f"API key {redact_key_for_logging(api_key)} failed for model '{model_name}' ({count} times, model-scoped 429/rate-limit)"
+                    f"API key {redact_key_for_logging(api_key)} failed for model '{model_name}' ({count} times, model-scoped failure)"
                 )
         else:
             async with self.failure_count_lock:
@@ -267,15 +359,22 @@ class KeyManager:
         status_code: int = None,
         error_msg: str = "",
     ) -> str:
-        """处理 Vertex Express API 调用失败，按错误类型智能区分模型级 429 与全局 Key 失效"""
-        if self._is_model_specific_error(status_code, error_msg) and model_name:
+        """处理 Vertex Express API 调用失败，支持白名单豁免、模型级隔离与全局失效多级判定"""
+        error_type = self.classify_error(status_code, error_msg)
+
+        if error_type == "whitelist":
+            logger.info(
+                f"Vertex Express API key {redact_key_for_logging(api_key)} encountered transient error (Status: {status_code}, Msg: '{error_msg}'). "
+                f"Matched whitelist rules - failure count ignored."
+            )
+        elif error_type == "model" and model_name:
             async with self.vertex_model_failure_count_lock:
                 if model_name not in self.vertex_model_key_failure_counts:
                     self.vertex_model_key_failure_counts[model_name] = {}
                 count = self.vertex_model_key_failure_counts[model_name].get(api_key, 0) + 1
                 self.vertex_model_key_failure_counts[model_name][api_key] = count
                 logger.warning(
-                    f"Vertex Express API key {redact_key_for_logging(api_key)} failed for model '{model_name}' ({count} times, model-scoped 429/rate-limit)"
+                    f"Vertex Express API key {redact_key_for_logging(api_key)} failed for model '{model_name}' ({count} times, model-scoped failure)"
                 )
         else:
             async with self.vertex_failure_count_lock:
