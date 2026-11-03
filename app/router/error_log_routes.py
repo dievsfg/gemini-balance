@@ -2,6 +2,8 @@
 日志路由模块
 """
 
+import asyncio
+import json
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -15,6 +17,7 @@ from fastapi import (
     Response,
     status,
 )
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.core.security import verify_auth_token
@@ -238,6 +241,94 @@ async def lookup_success_log_by_info(
             f"Failed to lookup success log by info for key=***{gemini_key[-4:] if gemini_key else ''}: {str(e)}"
         )
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get("/success/lookup-stream")
+async def lookup_success_log_stream_api(
+    request: Request,
+    gemini_key: str = Query(..., description="完整的 API key"),
+    timestamp: datetime = Query(..., description="请求时间 (ISO8601)"),
+    status_code: Optional[int] = Query(None, description="状态码 (可选)"),
+    window_seconds: int = Query(
+        100, ge=1, le=300, description="时间窗口(秒), 默认100秒"
+    ),
+):
+    """
+    单连接流式渐进下发成功请求详情：
+    Phase 1: 立即下发 meta 元数据事件 (秒级弹窗展示)
+    Phase 2: 分块流式推送 response_body (优先接收展示)
+    Phase 3: 分块流式推送 request_body
+    Phase 4: complete 结束
+    客户端断开时立即感知并中止数据传输。
+    """
+    auth_token = request.cookies.get("auth_token")
+    if not auth_token or not verify_auth_token(auth_token):
+        logger.warning("Unauthorized access attempt to stream lookup success log")
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    from app.database import services as db_services
+
+    detail = await db_services.find_success_log_by_info(
+        gemini_key=gemini_key,
+        timestamp=timestamp,
+        status_code=status_code,
+        window_seconds=window_seconds,
+    )
+    if not detail:
+        raise HTTPException(status_code=404, detail="No matching success log found")
+
+    async def event_generator():
+        chunk_size = 16384  # 16KB per chunk
+
+        # 1. 发送 meta 事件
+        meta_payload = {
+            "id": detail.get("id"),
+            "api_key": detail.get("api_key"),
+            "model_name": detail.get("model_name"),
+            "status_code": detail.get("status_code", 200),
+            "latency_ms": detail.get("latency_ms"),
+            "request_time": detail.get("request_time"),
+        }
+        yield f"event: meta\ndata: {json.dumps(meta_payload, ensure_ascii=False)}\n\n"
+
+        if await request.is_disconnected():
+            return
+
+        # 2. 优先分块发送 response_body
+        response_body = detail.get("response_body") or ""
+        if response_body:
+            for i in range(0, len(response_body), chunk_size):
+                if await request.is_disconnected():
+                    return
+                chunk = response_body[i : i + chunk_size]
+                yield f"event: response_chunk\ndata: {json.dumps({'chunk': chunk}, ensure_ascii=False)}\n\n"
+        yield "event: response_end\ndata: {}\n\n"
+
+        if await request.is_disconnected():
+            return
+
+        # 3. 随后分块发送 request_body
+        request_body = detail.get("request_body") or ""
+        if request_body:
+            for i in range(0, len(request_body), chunk_size):
+                if await request.is_disconnected():
+                    return
+                chunk = request_body[i : i + chunk_size]
+                yield f"event: request_chunk\ndata: {json.dumps({'chunk': chunk}, ensure_ascii=False)}\n\n"
+        yield "event: request_end\ndata: {}\n\n"
+
+        # 4. 传输完成
+        yield "event: complete\ndata: {}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.delete("/errors", status_code=status.HTTP_204_NO_CONTENT)

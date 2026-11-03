@@ -371,8 +371,18 @@ function resetAllKeysFailCount(type, event) {
   showResetModal(type);
 }
 
+// 全局详情流式加载中断控制器
+let currentSuccessDetailAbortController = null;
+
 // 关闭模态框并根据参数决定是否刷新页面
 function closeResultModal(reload = true) {
+  // 静默中止正在进行的详情流式请求
+  if (currentSuccessDetailAbortController) {
+    try {
+      currentSuccessDetailAbortController.abort();
+    } catch (_) {}
+    currentSuccessDetailAbortController = null;
+  }
   document.getElementById("resultModal").classList.add("hidden");
   if (reload) {
     location.reload(); // 操作完成后刷新页面
@@ -2026,87 +2036,266 @@ async function fetchAndShowErrorDetailByInfo(geminiKey, statusCode, timestampISO
   }
 }
 
-// 新增：根据 key / 状态码 / 时间窗口(±100秒) 查询并显示成功日志详情 (完整请求体与响应体)
+// 新增：根据 key / 状态码 / 时间窗口(±100秒) 单连接渐进式流式加载成功日志详情
 async function fetchAndShowSuccessDetailByInfo(geminiKey, statusCode, timestampISO) {
+  // 1. 中止之前可能未完成的请求
+  if (currentSuccessDetailAbortController) {
+    try {
+      currentSuccessDetailAbortController.abort();
+    } catch (_) {}
+  }
+  currentSuccessDetailAbortController = new AbortController();
+  const currentSignal = currentSuccessDetailAbortController.signal;
+
   try {
     if (!geminiKey || !timestampISO) {
-      showResultModal(false, '缺少必要参数，无法查询成功详情', false);
+      showResultModal(false, "缺少必要参数，无法查询成功详情", false);
       return;
     }
-    const params = new URLSearchParams();
-    params.set('gemini_key', geminiKey);
-    params.set('timestamp', timestampISO);
-    if (statusCode !== null && statusCode !== undefined) {
-      params.set('status_code', String(statusCode));
-    }
-    params.set('window_seconds', '100');
-    const detail = await fetchAPI(`/api/logs/success/lookup?${params.toString()}`);
-    if (!detail) {
-      showResultModal(false, '未找到匹配的成功详情（仅保留最近 300 条）', false);
-      return;
-    }
-    const container = document.createElement('div');
-    container.className = 'space-y-4 text-sm text-left max-h-[70vh] overflow-y-auto pr-1';
 
-    // 基础信息卡片
-    const basic = document.createElement('div');
-    basic.className = 'bg-gray-50 dark:bg-gray-800 p-3 rounded-lg border border-gray-200 dark:border-gray-700 grid grid-cols-2 gap-2 text-xs';
-    basic.innerHTML = `
-      <div><span class="font-semibold text-gray-600 dark:text-gray-300">Key:</span> <span class="font-mono text-gray-800 dark:text-gray-200">${detail.api_key ? detail.api_key.substring(0,4)+'...'+detail.api_key.slice(-4) : 'N/A'}</span></div>
-      <div><span class="font-semibold text-gray-600 dark:text-gray-300">模型:</span> <span class="text-gray-800 dark:text-gray-200">${detail.model_name || 'N/A'}</span></div>
-      <div><span class="font-semibold text-gray-600 dark:text-gray-300">时间:</span> <span class="text-gray-800 dark:text-gray-200">${detail.request_time ? new Date(detail.request_time).toLocaleString() : 'N/A'}</span></div>
-      <div><span class="font-semibold text-gray-600 dark:text-gray-300">耗时:</span> <span class="text-gray-800 dark:text-gray-200">${detail.latency_ms != null ? detail.latency_ms + ' ms' : 'N/A'}</span></div>
-    `;
-    container.appendChild(basic);
+    const params = new URLSearchParams();
+    params.set("gemini_key", geminiKey);
+    params.set("timestamp", timestampISO);
+    if (statusCode !== null && statusCode !== undefined) {
+      params.set("status_code", String(statusCode));
+    }
+    params.set("window_seconds", "100");
+
+    // 发起流式请求
+    const response = await fetch(
+      `/api/logs/success/lookup-stream?${params.toString()}`,
+      {
+        signal: currentSignal,
+        headers: {
+          Accept: "text/event-stream",
+        },
+      }
+    );
+
+    if (!response.ok) {
+      if (response.status === 404) {
+        showResultModal(
+          false,
+          "未找到匹配的成功详情（仅保留最近 300 条）",
+          false
+        );
+        return;
+      }
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder("utf-8");
+    let buffer = "";
+
+    // 界面 DOM 容器与元素
+    let container = null;
+    let responsePre = null;
+    let requestPre = null;
+    let responseCopyBtn = null;
+    let requestCopyBtn = null;
+
+    let accumulatedResponse = "";
+    let accumulatedRequest = "";
 
     // 辅助函数：创建带复制按钮的代码展示区
-    const createCodeSection = (title, content, bgColorClass) => {
-      const section = document.createElement('div');
-      section.className = 'space-y-1.5';
+    const createCodeSection = (title, bgColorClass, initialHint) => {
+      const section = document.createElement("div");
+      section.className = "space-y-1.5";
 
-      const header = document.createElement('div');
-      header.className = 'flex items-center justify-between';
+      const header = document.createElement("div");
+      header.className = "flex items-center justify-between";
       header.innerHTML = `<span class="font-semibold text-gray-700 dark:text-gray-300">${title}</span>`;
 
-      const copyBtn = document.createElement('button');
-      copyBtn.className = 'px-2 py-0.5 text-xs rounded bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 transition-colors flex items-center gap-1';
+      const copyBtn = document.createElement("button");
+      copyBtn.className =
+        "px-2 py-0.5 text-xs rounded bg-gray-200 dark:bg-gray-700 text-gray-400 cursor-not-allowed transition-colors flex items-center gap-1";
       copyBtn.innerHTML = '<i class="far fa-copy"></i> 复制';
-      copyBtn.onclick = () => {
-        navigator.clipboard.writeText(content).then(() => {
-          copyBtn.innerHTML = '<i class="fas fa-check text-green-500"></i> 已复制';
-          setTimeout(() => { copyBtn.innerHTML = '<i class="far fa-copy"></i> 复制'; }, 2000);
-        });
-      };
+      copyBtn.disabled = true;
+
       header.appendChild(copyBtn);
       section.appendChild(header);
 
-      const pre = document.createElement('pre');
+      const pre = document.createElement("pre");
       pre.className = `${bgColorClass} border rounded-lg p-3 text-xs max-h-60 overflow-y-auto whitespace-pre-wrap break-words font-mono`;
-      pre.textContent = content || '无内容';
+      pre.innerHTML = initialHint;
       section.appendChild(pre);
 
-      return section;
+      return { section, pre, copyBtn };
     };
 
-    // 请求体
-    container.appendChild(createCodeSection(
-      '完整请求体 (Request Body)',
-      detail.request_body || '无请求体数据',
-      'bg-gray-50 border-gray-200 dark:bg-gray-900 dark:border-gray-700 text-gray-800 dark:text-gray-200'
-    ));
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
-    // 响应体
-    container.appendChild(createCodeSection(
-      '完整响应体 (Response Body)',
-      detail.response_body || '无响应体数据',
-      'bg-green-50/50 border-green-200 dark:bg-gray-900 dark:border-green-800 text-gray-800 dark:text-gray-200'
-    ));
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split("\n\n");
+      buffer = parts.pop(); // 未完成的段落留在 buffer 中
 
-    showResultModal(true, container, false);
-    const titleElement = document.getElementById("resultModalTitle");
-    if (titleElement) titleElement.textContent = "API 请求成功详情";
+      for (const block of parts) {
+        if (!block.trim()) continue;
+
+        let eventType = "message";
+        let eventData = "";
+
+        const lines = block.split("\n");
+        for (const line of lines) {
+          if (line.startsWith("event:")) {
+            eventType = line.substring(6).trim();
+          } else if (line.startsWith("data:")) {
+            eventData = line.substring(5).trim();
+          }
+        }
+
+        // 1. Meta 事件：秒级弹出窗口并呈现元信息
+        if (eventType === "meta") {
+          let meta = {};
+          try {
+            meta = JSON.parse(eventData);
+          } catch (_) {}
+
+          container = document.createElement("div");
+          container.className =
+            "space-y-4 text-sm text-left max-h-[70vh] overflow-y-auto pr-1";
+
+          // 基础信息卡片
+          const basic = document.createElement("div");
+          basic.className =
+            "bg-gray-50 dark:bg-gray-800 p-3 rounded-lg border border-gray-200 dark:border-gray-700 grid grid-cols-2 gap-2 text-xs";
+          basic.innerHTML = `
+            <div><span class="font-semibold text-gray-600 dark:text-gray-300">Key:</span> <span class="font-mono text-gray-800 dark:text-gray-200">${
+              meta.api_key
+                ? meta.api_key.substring(0, 4) +
+                  "..." +
+                  meta.api_key.slice(-4)
+                : "N/A"
+            }</span></div>
+            <div><span class="font-semibold text-gray-600 dark:text-gray-300">模型:</span> <span class="text-gray-800 dark:text-gray-200">${
+              meta.model_name || "N/A"
+            }</span></div>
+            <div><span class="font-semibold text-gray-600 dark:text-gray-300">时间:</span> <span class="text-gray-800 dark:text-gray-200">${
+              meta.request_time
+                ? new Date(meta.request_time).toLocaleString()
+                : "N/A"
+            }</span></div>
+            <div><span class="font-semibold text-gray-600 dark:text-gray-300">耗时:</span> <span class="text-gray-800 dark:text-gray-200">${
+              meta.latency_ms != null ? meta.latency_ms + " ms" : "N/A"
+            }</span></div>
+          `;
+          container.appendChild(basic);
+
+          // 响应体区域 (初始展示加载中骨架)
+          const respSection = createCodeSection(
+            "完整响应体 (Response Body)",
+            "bg-green-50/50 border-green-200 dark:bg-gray-900 dark:border-green-800 text-gray-800 dark:text-gray-200",
+            '<span class="text-emerald-600 animate-pulse flex items-center gap-2"><i class="fas fa-spinner fa-spin"></i> 正在优先接收响应体...</span>'
+          );
+          responsePre = respSection.pre;
+          responseCopyBtn = respSection.copyBtn;
+          container.appendChild(respSection.section);
+
+          // 请求体区域 (初始排队状态)
+          const reqSection = createCodeSection(
+            "完整请求体 (Request Body)",
+            "bg-gray-50 border-gray-200 dark:bg-gray-900 dark:border-gray-700 text-gray-800 dark:text-gray-200",
+            '<span class="text-gray-400 italic flex items-center gap-1.5"><i class="fas fa-clock"></i> 等待响应体接收完成...</span>'
+          );
+          requestPre = reqSection.pre;
+          requestCopyBtn = reqSection.copyBtn;
+          container.appendChild(reqSection.section);
+
+          // 秒级弹出模态框！
+          showResultModal(true, container, false);
+          const titleElement = document.getElementById("resultModalTitle");
+          if (titleElement) titleElement.textContent = "API 请求成功详情";
+        }
+
+        // 2. 响应体流式 chunk
+        else if (eventType === "response_chunk") {
+          try {
+            const dataObj = JSON.parse(eventData);
+            if (responsePre) {
+              if (!accumulatedResponse) {
+                responsePre.textContent = ""; // 清空等待提示
+              }
+              accumulatedResponse += dataObj.chunk || "";
+              responsePre.textContent = accumulatedResponse;
+            }
+          } catch (_) {}
+        }
+
+        // 3. 响应体接收完成
+        else if (eventType === "response_end") {
+          if (responsePre && !accumulatedResponse) {
+            responsePre.textContent = "无响应体数据";
+          }
+          if (responseCopyBtn && accumulatedResponse) {
+            responseCopyBtn.disabled = false;
+            responseCopyBtn.className =
+              "px-2 py-0.5 text-xs rounded bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 transition-colors flex items-center gap-1 cursor-pointer";
+            responseCopyBtn.onclick = () => {
+              navigator.clipboard.writeText(accumulatedResponse).then(() => {
+                responseCopyBtn.innerHTML =
+                  '<i class="fas fa-check text-green-500"></i> 已复制';
+                setTimeout(() => {
+                  responseCopyBtn.innerHTML =
+                    '<i class="far fa-copy"></i> 复制';
+                }, 2000);
+              });
+            };
+          }
+          // 更新请求体等待状态为正在接收
+          if (requestPre && !accumulatedRequest) {
+            requestPre.innerHTML =
+              '<span class="text-blue-600 animate-pulse flex items-center gap-2"><i class="fas fa-spinner fa-spin"></i> 正在接收请求体...</span>';
+          }
+        }
+
+        // 4. 请求体流式 chunk
+        else if (eventType === "request_chunk") {
+          try {
+            const dataObj = JSON.parse(eventData);
+            if (requestPre) {
+              if (!accumulatedRequest) {
+                requestPre.textContent = ""; // 清空等待提示
+              }
+              accumulatedRequest += dataObj.chunk || "";
+              requestPre.textContent = accumulatedRequest;
+            }
+          } catch (_) {}
+        }
+
+        // 5. 请求体接收完成
+        else if (eventType === "request_end") {
+          if (requestPre && !accumulatedRequest) {
+            requestPre.textContent = "无请求体数据";
+          }
+          if (requestCopyBtn && accumulatedRequest) {
+            requestCopyBtn.disabled = false;
+            requestCopyBtn.className =
+              "px-2 py-0.5 text-xs rounded bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 transition-colors flex items-center gap-1 cursor-pointer";
+            requestCopyBtn.onclick = () => {
+              navigator.clipboard.writeText(accumulatedRequest).then(() => {
+                requestCopyBtn.innerHTML =
+                  '<i class="fas fa-check text-green-500"></i> 已复制';
+                setTimeout(() => {
+                  requestCopyBtn.innerHTML =
+                    '<i class="far fa-copy"></i> 复制';
+                }, 2000);
+              });
+            };
+          }
+        }
+      }
+    }
   } catch (e) {
+    if (e.name === "AbortError") {
+      // 关窗或重新触发导致的静默中止，不弹报错
+      return;
+    }
     showResultModal(false, `加载成功详情失败: ${e.message}`, false);
+  } finally {
+    currentSuccessDetailAbortController = null;
   }
 }
 

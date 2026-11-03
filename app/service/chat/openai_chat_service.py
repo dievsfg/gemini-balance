@@ -661,6 +661,8 @@ class OpenAIChatService:
 
                 accumulated_content = []
                 accumulated_reasoning = []
+                final_usage = None
+                final_finish_reason = None
                 saved_response = None
                 async for chunk_data in stream_generator:
                     has_yielded_data = True
@@ -670,8 +672,12 @@ class OpenAIChatService:
                         if chunk_str and chunk_str != "[DONE]":
                             try:
                                 c = json.loads(chunk_str)
+                                if "usage" in c and c["usage"]:
+                                    final_usage = c["usage"]
                                 choices = c.get("choices", [])
                                 if choices:
+                                    if choices[0].get("finish_reason"):
+                                        final_finish_reason = choices[0]["finish_reason"]
                                     delta = choices[0].get("delta", {})
                                     if "content" in delta and delta["content"]:
                                         accumulated_content.append(delta["content"])
@@ -686,9 +692,23 @@ class OpenAIChatService:
                 )
                 is_success = True
                 status_code = 200
-                saved_response = {"content": "".join(accumulated_content)}
+                choice_obj = {
+                    "message": {
+                        "role": "model",
+                        "content": "".join(accumulated_content),
+                    }
+                }
                 if accumulated_reasoning:
-                    saved_response["reasoning_content"] = "".join(accumulated_reasoning)
+                    choice_obj["message"]["reasoning_content"] = "".join(accumulated_reasoning)
+                if final_finish_reason:
+                    choice_obj["finish_reason"] = final_finish_reason
+
+                saved_response = {
+                    "model": model,
+                    "choices": [choice_obj],
+                }
+                if final_usage:
+                    saved_response["usage"] = final_usage
                 break
 
             except Exception as e:

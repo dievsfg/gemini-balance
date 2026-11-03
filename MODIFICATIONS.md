@@ -233,7 +233,7 @@
     - [文件 5]：在 `OpenAIChatService` 中提纯 `clean_message` 填充进 OpenAI 标准错误格式的 `message` 字段。
 
 ## 📅 2026-10-30：新增高自由度 API 错误分类规则系统与白名单忽略机制
-* **提交版本**：`<Current>`
+* **提交版本**：`7b604ff`
 * **影响文件**：
   1. `app/config/config.py`
   2. `app/service/key/key_manager.py`
@@ -258,3 +258,22 @@
     - [文件 6]：在 `helpers.py` 的 `redact_key_for_logging` 中增强非字符串类型与空值前置防御，修正短密钥脱敏占位。
     - [文件 7]：在 `logger.py` 中同步强化 `redact_key_for_logging` 防御。
     - [文件 8]：更新 `test_key_redaction.py` 中的模式数量断言以匹配 3 种密钥格式（`AIza`、`AQ.`、`sk-`）。
+
+## 📅 2026-10-31：成功详情单连接渐进式流式加载与流式日志 Token 用量元信息补全
+* **提交版本**：`<Current>`
+* **影响文件**：
+  1. `app/service/chat/gemini_chat_service.py`
+  2. `app/service/chat/vertex_express_chat_service.py`
+  3. `app/service/chat/openai_chat_service.py`
+  4. `app/router/error_log_routes.py`
+  5. `app/static/js/keys_status.js`
+* **改动说明**：
+  * **[流式日志 Token 用量及完整元数据补全]**：解决流式请求成功日志中遗漏 `usageMetadata` 的缺陷。
+    - [文件 1]：在 `GeminiChatService.stream_generate_content` 中提取帧级 `usageMetadata`、`modelVersion` 及 `finishReason`，构建并保存至完整响应体。
+    - [文件 2]：在 `VertexExpressChatService.stream_generate_content` 中同步提取保存流式 Token 用量与元信息。
+    - [文件 3]：在 `OpenAIChatService._handle_stream_completion` 中提取流式 `usage`、`finish_reason` 并结构化保存至响应体中。
+  * **[单连接流式渐进下发接口开发]**：提供秒级响应的 SSE 详情接口，支持优先输出与断连感知。
+    - [文件 4]：新增 `GET /api/logs/success/lookup-stream` 接口，按阶段流式推送 `meta`、`response_chunk`（优先）及 `request_chunk`；接入 `request.is_disconnected()` 确保断连即停。
+  * **[前端骨架极速弹窗与静默中止]**：彻底消除网络加载等待卡顿与请求挂起。
+    - [文件 5]：重构 `fetchAndShowSuccessDetailByInfo`，收到 `meta` 事件后毫秒级弹出详情框与基础卡片，流式接收响应体并点亮复制，随后流式接收请求体。
+    - [文件 5]：在 `closeResultModal` 中引入全局 `AbortController.abort()`，用户关闭窗口瞬间静默切断连接并停止后台加载。

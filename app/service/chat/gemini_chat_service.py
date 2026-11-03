@@ -713,6 +713,9 @@ class GeminiChatService:
                     )
 
                 accumulated_parts = []
+                final_usage_metadata = None
+                final_finish_reason = None
+                model_version = None
                 saved_response = None
                 async for chunk_data in stream_generator:
                     has_yielded_data = True
@@ -722,8 +725,14 @@ class GeminiChatService:
                         if chunk_str:
                             try:
                                 c = json.loads(chunk_str)
+                                if "usageMetadata" in c and c["usageMetadata"]:
+                                    final_usage_metadata = c["usageMetadata"]
+                                if "modelVersion" in c and c["modelVersion"]:
+                                    model_version = c["modelVersion"]
                                 candidates = c.get("candidates", [])
                                 if candidates:
+                                    if candidates[0].get("finishReason"):
+                                        final_finish_reason = candidates[0]["finishReason"]
                                     parts = candidates[0].get("content", {}).get("parts", [])
                                     for p in parts:
                                         if isinstance(p, dict):
@@ -735,11 +744,16 @@ class GeminiChatService:
                 is_success = True
                 status_code = 200
                 if accumulated_parts:
+                    cand_obj = {"content": {"parts": accumulated_parts, "role": "model"}}
+                    if final_finish_reason:
+                        cand_obj["finishReason"] = final_finish_reason
                     saved_response = {
-                        "candidates": [
-                            {"content": {"parts": accumulated_parts, "role": "model"}}
-                        ]
+                        "candidates": [cand_obj]
                     }
+                    if final_usage_metadata:
+                        saved_response["usageMetadata"] = final_usage_metadata
+                    if model_version:
+                        saved_response["modelVersion"] = model_version
                 break
             except Exception as e:
                 retries += 1
